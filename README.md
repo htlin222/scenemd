@@ -47,7 +47,7 @@ The planner prefers semantic integrity, readable typography, whitespace, and sta
 
 - Ordinary GFM Markdown as the single source of truth
 - Automatic heading-driven regions and measured semantic pagination
-- Responsive cover, chapter, text, text-media, media-dominant, and statement scenes
+- Responsive cover, chapter, text, text-media, media-dominant, legend, and statement scenes
 - Separate cover configuration for title, subtitle, series, author, date, affiliation, email, and license
 - H1 chapter navigation, H2 context breadcrumbs for H3 scenes, and progress tracking
 - Compact, Balanced, and Cinematic density modes
@@ -61,6 +61,12 @@ The planner prefers semantic integrity, readable typography, whitespace, and sta
 - Manual two-way HackMD pull/push/smart sync through a server-side secret
 - Read-only share links and Cloudflare Access protection for editing
 - Fullscreen keyboard presentation, step reveals, black/white screens, dark/light themes
+- Default, editorial, and Catppuccin themes in light and dark
+- Speaker notes from ordinary HTML comments, with a separate presenter window
+- Cursor-linked editing: the editor and the current scene follow each other
+- Column groups, tabbed code groups, and per-step code highlighting
+- Bracketed citations with DOI and PubMed lookup, bibliography cards, and Pandoc-compatible references
+- Export to PowerPoint, PDF, slide HTML, Word, document HTML, and Markdown
 - Explainable planner scores and a development debug overlay
 
 ## Quick start
@@ -188,7 +194,11 @@ For an edit-only access gate, create a Cloudflare Access application for the pro
 
 ## Project status
 
-SceneMD is an early, working MVP. HTML/PDF/PPTX export, complex table pagination, multiplayer collaboration, and WYSIWYG block editing remain outside the current core. See [the product specification](spec.md) for the full thesis and roadmap.
+SceneMD is an early, working MVP.
+
+Export is implemented for all six formats listed above. Note that PowerPoint and PDF export capture each scene as a raster image, so the result is faithful to what was on screen but not editable as slides — Markdown remains the canonical, editable source. Large tables paginate by row groups and repeat their header.
+
+Still outside the current core, by design: multiplayer collaboration, WYSIWYG block editing, a slide canvas with drag positioning, AI deck generation, and animation timelines. See [the product specification](spec.md) for the full thesis and roadmap, and the [open issues](https://github.com/htlin222/scenemd/issues) for known gaps — the deterministic engine has no automated test coverage yet, which is tracked in #1 and #6.
 
 ## Contributing
 
