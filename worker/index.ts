@@ -42,6 +42,12 @@ interface DocumentRow {
   hackmd_synced_at: number
 }
 
+interface TextEdit {
+  start: number
+  end: number
+  insert: string
+}
+
 interface HackMDNote {
   id: string
   title: string
@@ -88,6 +94,45 @@ function cleanBulletMarkdown(value: string): string {
 
 function cleanGeneratedNote(value: string): string {
   return value.trim().replace(/^```(?:markdown|md|text)?\s*/i, '').replace(/\s*```$/i, '').trim()
+}
+
+function changedSpan(base: string, next: string): TextEdit | null {
+  if (base === next) return null
+  let start = 0
+  const sharedLimit = Math.min(base.length, next.length)
+  while (start < sharedLimit && base[start] === next[start]) start += 1
+  let baseEnd = base.length
+  let nextEnd = next.length
+  while (baseEnd > start && nextEnd > start && base[baseEnd - 1] === next[nextEnd - 1]) {
+    baseEnd -= 1
+    nextEnd -= 1
+  }
+  return { start, end: baseEnd, insert: next.slice(start, nextEnd) }
+}
+
+function editsOverlap(left: TextEdit, right: TextEdit): boolean {
+  if (left.start === left.end && right.start === right.end) return left.start === right.start
+  if (left.start === left.end) return left.start > right.start && left.start < right.end
+  if (right.start === right.end) return right.start > left.start && right.start < left.end
+  return left.start < right.end && right.start < left.end
+}
+
+/**
+ * Merge the common autosave case: each client changed one contiguous span of
+ * the same base document. Ambiguous overlapping edits remain a real conflict
+ * and must be resolved by the author.
+ */
+function mergeMarkdown(base: string, local: string, cloud: string): string | null {
+  if (local === cloud) return cloud
+  if (local === base) return cloud
+  if (cloud === base) return local
+  const localEdit = changedSpan(base, local)
+  const cloudEdit = changedSpan(base, cloud)
+  if (!localEdit) return cloud
+  if (!cloudEdit) return local
+  if (editsOverlap(localEdit, cloudEdit)) return null
+  const edits = [localEdit, cloudEdit].sort((left, right) => right.start - left.start)
+  return edits.reduce((result, edit) => `${result.slice(0, edit.start)}${edit.insert}${result.slice(edit.end)}`, base)
 }
 
 function hackmdNoteId(value: string): string {
@@ -287,14 +332,22 @@ export class DocumentRoom extends DurableObject<Env> {
     if (request.method === 'PATCH') {
       const current = await this.load(documentId)
       if (!current) return json({ error: 'Document not found' }, 404)
-      const body = await request.json<{ title?: string; markdown?: string; presentationConfig?: unknown; baseRevision?: number }>()
+      const body = await request.json<{ title?: string; markdown?: string; baseMarkdown?: string; presentationConfig?: unknown; baseRevision?: number }>()
+      let nextMarkdown = body.markdown ?? current.markdown
+      let merged = false
       if (body.baseRevision !== undefined && body.baseRevision !== current.revision) {
-        return json({ error: 'Document changed in another session', document: current }, 409)
+        if (typeof body.markdown !== 'string' || typeof body.baseMarkdown !== 'string') {
+          return json({ error: 'Document changed in another session', document: current }, 409)
+        }
+        const mergedMarkdown = mergeMarkdown(body.baseMarkdown, body.markdown, current.markdown)
+        if (mergedMarkdown === null) return json({ error: 'The same content changed in another session', document: current }, 409)
+        nextMarkdown = mergedMarkdown
+        merged = true
       }
       const next: DocumentState = {
         ...current,
         title: body.title?.trim() || current.title,
-        markdown: body.markdown ?? current.markdown,
+        markdown: nextMarkdown,
         presentationConfig: normalizePresentationConfig(body.presentationConfig ?? current.presentationConfig, body.title?.trim() || current.title),
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
@@ -304,7 +357,7 @@ export class DocumentRoom extends DurableObject<Env> {
       ).bind(next.title, next.markdown, JSON.stringify(next.presentationConfig), next.revision, next.updatedAt, documentId).run()
       await this.ctx.storage.put('document', next)
       this.cachedState = next
-      return json(next)
+      return json({ ...next, merged })
     }
 
     if (request.method === 'DELETE') {
