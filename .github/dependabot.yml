@@ -1,0 +1,63 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # The remark/unified stack is pinned exactly because semantics.ts reads
+      # mdast node shapes directly. These must move together and be reviewed
+      # against the parser tests, never merged individually.
+      markdown-pipeline:
+        patterns:
+          - unified
+          - remark-*
+          - rehype-*
+          - katex
+          - "@types/katex"
+      # Editor stack. CodeMirror ships as many small coordinated packages;
+      # splitting them across PRs produces version skew inside one editor.
+      codemirror:
+        patterns:
+          - codemirror
+          - "@codemirror/*"
+          - "@lezer/*"
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+          - "@vitejs/plugin-react"
+      # wrangler and workers-types track the same fast-moving platform.
+      # See CONTRIBUTING.md on keeping compatibility_date in sync.
+      cloudflare:
+        patterns:
+          - wrangler
+          - "@cloudflare/workers-types"
+      build-tooling:
+        patterns:
+          - vite
+          - vite-plugin-pwa
+          - typescript
+      # Export formats are independent of the engine; a break here affects
+      # ExportDialog only, so these can travel together.
+      export:
+        patterns:
+          - docx
+          - jspdf
+          - pptxgenjs
+          - html-to-image
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns:
+          - "*"
