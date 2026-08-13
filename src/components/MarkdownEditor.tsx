@@ -755,6 +755,26 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const current = imageTool
     const view = viewRef.current
     if (!current || !view) return
+    const source = view.state.doc.toString()
+    let from = current.from
+    let to = current.to
+    const currentSlice = source.slice(from, to)
+    if (!currentSlice.startsWith('![') || !currentSlice.includes(`](${current.url})`)) {
+      const marker = `](${current.url})`
+      const candidates: Array<{ from: number; to: number }> = []
+      let markerIndex = source.indexOf(marker)
+      while (markerIndex >= 0) {
+        const imageStart = source.lastIndexOf('![', markerIndex)
+        if (imageStart >= 0 && !source.slice(imageStart, markerIndex).includes('\n')) {
+          candidates.push({ from: imageStart, to: markerIndex + marker.length })
+        }
+        markerIndex = source.indexOf(marker, markerIndex + marker.length)
+      }
+      const nearest = candidates.sort((left, right) => Math.abs(left.from - current.from) - Math.abs(right.from - current.from))[0]
+      if (!nearest) return
+      from = nearest.from
+      to = nearest.to
+    }
     const nextOptions = { ...current.options, ...patch }
     if (nextOptions.fit === 'cover') nextOptions.fit = 'contain'
     if (patch.layout === 'legend') {
@@ -765,9 +785,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const nextUrl = patch.url ?? current.url
     const syntax = `![${formatMarpitImageAlt(nextOptions)}](${nextUrl})`
     view.dispatch({
-      changes: { from: current.from, to: current.to, insert: syntax },
+      changes: { from, to, insert: syntax },
     })
-    setImageTool({ ...current, to: current.from + syntax.length, url: nextUrl, options: nextOptions })
+    setImageTool({ ...current, from, to: from + syntax.length, url: nextUrl, options: nextOptions })
   }
 
   useEffect(() => {
