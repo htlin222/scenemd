@@ -35,6 +35,54 @@
   background: #171a17;
 }
 
+/* Per-document design systems follow OpenSlide's explicit palette approach
+ * while preserving SceneMD's responsive layout grammar. Catppuccin uses the
+ * official Latte palette in light mode and Mocha in dark mode. */
+.scene[data-presentation-theme='editorial'] {
+  --template-teal: #9a3412;
+  --template-text: #2f2923;
+  --template-muted: #7c6f64;
+  --template-faint: #a89a8e;
+  --template-line: #d9cfc2;
+  --template-callout: #eee4d7;
+  background: #f7f1e8;
+}
+
+:root[data-theme='dark'] .scene[data-presentation-theme='editorial'] {
+  --template-teal: #fdba74;
+  --template-text: #f5ede3;
+  --template-muted: #c7b8a8;
+  --template-faint: #8f8174;
+  --template-line: #51483f;
+  --template-callout: #332d28;
+  background: #211d1a;
+}
+
+.scene[data-presentation-theme='catppuccin'] {
+  --template-teal: #8839ef;
+  --template-text: #4c4f69;
+  --template-muted: #6c6f85;
+  --template-faint: #9ca0b0;
+  --template-line: #ccd0da;
+  --template-callout: #e6e9ef;
+  background: #eff1f5;
+}
+
+:root[data-theme='dark'] .scene[data-presentation-theme='catppuccin'] {
+  --template-teal: #cba6f7;
+  --template-text: #cdd6f4;
+  --template-muted: #a6adc8;
+  --template-faint: #6c7086;
+  --template-line: #45475a;
+  --template-callout: #313244;
+  background: #1e1e2e;
+}
+
+.scene[data-presentation-theme='editorial'] li strong { background: #ead9c7; }
+.scene[data-presentation-theme='catppuccin'] li strong { background: #e6e9ef; }
+:root[data-theme='dark'] .scene[data-presentation-theme='editorial'] li strong { background: #40372f; }
+:root[data-theme='dark'] .scene[data-presentation-theme='catppuccin'] li strong { background: #313244; }
+
 .scene::before,
 .scene::after { content: none; display: none; }
 
@@ -66,6 +114,8 @@
 .scene p:last-child { margin-bottom: 0; }
 .scene strong { color: inherit; font-weight: 700; }
 .scene a { color: var(--template-teal); text-underline-offset: 0.2em; }
+.scene sup.citation-marker { margin-left: 0.08em; font-size: 0.68em; font-weight: 700; line-height: 0; vertical-align: super; }
+.scene sup.citation-marker a { text-decoration: none; }
 
 .scene-content {
   position: absolute;
@@ -77,6 +127,24 @@
   min-width: 0;
   min-height: 0;
 }
+.scene.has-citations .scene-content { bottom: 10cqw; }
+.scene-citations {
+  position: absolute;
+  z-index: 20;
+  right: 9cqw;
+  bottom: 2.5cqw;
+  left: 5.729cqw;
+  max-height: 5.7cqw;
+  display: grid;
+  gap: 0.28cqw;
+  padding-top: 0.52cqw;
+  overflow: hidden;
+  color: var(--template-muted);
+  border-top: 1px solid var(--template-line);
+  font: 400 0.92cqw/1.25 'Source Sans 3', 'Source Sans Pro', sans-serif;
+}
+.scene-citations > div { display: grid; grid-template-columns: 1.45em minmax(0, 1fr); gap: 0.28em; }
+.scene-citations sup { color: var(--template-teal); font-size: inherit; font-weight: 700; line-height: inherit; vertical-align: baseline; }
 
 .scene-heading { flex: 0 0 auto; margin-bottom: 1.667cqw; }
 .scene-heading:empty { display: none; }
@@ -105,6 +173,12 @@
   transition: opacity 200ms ease, transform 200ms ease;
 }
 
+/* Bibliographies are appendix material: compact, but each entry remains an
+ * atomic list item. The planner moves excess entries into continued scenes. */
+.scene .block-list[data-semantic-role='reference'] { gap: 0.5cqw; }
+.scene .block-list[data-semantic-role='reference'] li { font-size: 1.35cqw; line-height: 1.28; }
+.scene .block-list[data-semantic-role='reference'] .list-marker { color: var(--template-teal); font-weight: 700; }
+
 .scene li:nth-child(n + 2) { --delay: 0.1s; }
 .scene li:nth-child(n + 3) { --delay: 0.15s; }
 .scene li:nth-child(n + 4) { --delay: 0.2s; }
@@ -113,6 +187,8 @@
 .scene li:nth-child(n + 7) { --delay: 0.35s; }
 .scene li:nth-child(n + 8) { --delay: 0.4s; }
 .scene .list-marker { color: var(--template-teal); font-family: inherit; font-weight: 400; }
+.scene [data-semantic-role='reference'] { gap: 0.55cqw; }
+.scene [data-semantic-role='reference'] li { font-size: max(20px, 1.6cqw); line-height: 1.32; }
 .scene li strong { padding: 0.05em 0.3em; color: var(--template-teal); border-radius: 4px; background: #e5e7eb; }
 :root[data-theme='dark'] .scene li strong { background: #353b36; }
 .scene li.is-hidden-step { opacity: 0; transform: translateY(8px); }
@@ -208,7 +284,8 @@
   align-items: flex-start;
   justify-content: space-between;
 }
-.presentation-cover-top span { padding: 0.417cqw 1.458cqw; color: #fff; border-radius: 2px; background: var(--template-teal); font-size: 1.875cqw; font-weight: 700; line-height: 1.3; }
+.presentation-cover-top > .series-name-badge { min-height: 3.27cqw; display: inline-flex; align-items: center; justify-content: center; padding: 0 1.458cqw; color: #fff; border-radius: 2px; background: var(--template-teal); font-size: 1.875cqw; font-weight: 700; line-height: 1; }
+.presentation-cover-top > .series-name-badge > span { transform: translateY(0.06em); }
 .presentation-cover-top time { padding-top: 0.625cqw; color: #888; font-size: 1.667cqw; line-height: 1.3; }
 .presentation-cover-center { max-width: 95%; text-align: left; }
 .presentation-cover-center h1 { margin: 0; color: var(--template-teal); font-size: 5.833cqw; font-weight: 800; line-height: 1.2; letter-spacing: -0.025em; }
@@ -259,19 +336,77 @@
 :root[data-theme='dark'] .block-code { background: #242824; }
 .code-header { height: 2.917cqw; padding: 0 1.25cqw; display: flex; align-items: center; justify-content: space-between; color: var(--template-muted); border-bottom: 1px solid var(--template-line); font: 600 1.042cqw ui-monospace, SFMono-Regular, Menlo, monospace; }
 .block-code pre { max-height: 31cqw; margin: 0; padding: 1.458cqw; overflow: hidden; font: 1.35cqw/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.code-lines { display: grid; min-width: 0; }
+.code-line { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); padding: 0 0.35cqw; border-left: 2px solid transparent; transition: opacity 180ms ease, background 180ms ease; }
+.code-lines.has-line-numbers .code-line { grid-template-columns: 3.3em minmax(0, 1fr); }
+.code-line-number { padding-right: 1em; color: var(--template-faint); text-align: right; user-select: none; }
+.code-line-content { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-line.is-dimmed { opacity: 0.28; }
+.code-line.is-highlighted { border-left-color: var(--template-teal); background: color-mix(in srgb, var(--template-teal) 12%, transparent); }
+.code-lines.is-code-hidden { visibility: hidden; }
+.block-code-group { overflow: hidden; border: 1px solid var(--template-line); background: #f5f6f5; }
+:root[data-theme='dark'] .block-code-group { background: #242824; }
+.code-group-tabs { min-height: 2.917cqw; display: flex; align-items: stretch; gap: 0; overflow-x: auto; border-bottom: 1px solid var(--template-line); }
+.code-group-tabs button { appearance: none; padding: 0.65cqw 1.15cqw; color: var(--template-muted); border: 0; border-right: 1px solid var(--template-line); border-bottom: 2px solid transparent; background: transparent; font: 600 1.05cqw ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+.code-group-tabs button[aria-selected='true'] { color: var(--template-teal); border-bottom-color: var(--template-teal); background: color-mix(in srgb, var(--template-teal) 7%, transparent); }
+.code-group-shell > .code-lines { max-height: 31cqw; padding: 1.458cqw; overflow: hidden; font: 1.35cqw/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mermaid-diagram { width: 100%; max-height: 31cqw; display: grid; place-items: center; padding: 1cqw; overflow: hidden; }
+.mermaid-diagram svg { width: 100%; max-width: 100%; height: auto; max-height: 29cqw; }
+.mermaid-error { padding: 1.25cqw; color: #b6483d; font-size: 1.25cqw; white-space: pre-wrap; }
 .block-math { padding: 1.25cqw; overflow: hidden; font-size: 2cqw; }
 
-/* Tables mirror the template at wide width. Paginated single rows become
- * labeled semantic cards in a narrow preview instead of unreadable columns. */
-.block-table { overflow: hidden; border: 0; }
+/* Minimal tables use spacing and horizontal rules only. Keep the same table
+ * grammar at every width; narrow scenes may scroll instead of becoming cards. */
+.block-table { overflow-x: auto; overflow-y: hidden; border: 0; }
 .block-table table { width: 100%; border-collapse: collapse; table-layout: auto; color: var(--template-text); font-size: 2.083cqw; line-height: 1.3; }
 .block-table th,
-.block-table td { padding: 0.313cqw 0.833cqw; vertical-align: top; border: 0; border-bottom: 1px solid var(--template-line); overflow-wrap: anywhere; text-align: left; }
-.block-table th { border-bottom-width: 2px; font-family: inherit; font-size: inherit; font-weight: 700; line-height: inherit; }
-.block-table th:first-child,
-.block-table td:first-child { width: 1%; font-weight: 700; white-space: nowrap; }
-.block-table td:hover { background: #e5e7eb; }
-:root[data-theme='dark'] .block-table td:hover { background: #303530; }
+.block-table td { padding: 0.55cqw 0.65cqw; vertical-align: top; border: 0; border-bottom: 1px solid var(--template-line); background: transparent; overflow-wrap: anywhere; text-align: left; }
+.block-table th { border-bottom-color: var(--template-teal); font-family: inherit; font-size: inherit; font-weight: 700; line-height: inherit; }
+
+.block-columns {
+  display: grid;
+  grid-template-columns: repeat(var(--column-count, 2), minmax(0, 1fr));
+  gap: 3.25cqw;
+  min-width: 0;
+}
+.semantic-column { min-width: 0; padding-top: 0.9cqw; border-top: 2px solid var(--template-teal); }
+.semantic-column > h3 { margin: 0 0 1.15cqw; color: var(--template-teal); font-size: 2.25cqw; }
+.semantic-column > ul,
+.semantic-column > ol { gap: 0.65cqw; }
+.semantic-column > p,
+.semantic-column > ul li,
+.semantic-column > ol li { font-size: 1.82cqw; }
+
+/* Measurement uses the same responsive table grammar as the rendered scene.
+ * Without a query container, cqw resolved against the browser viewport and a
+ * narrow two-row table was incorrectly reported as oversized. */
+.measurement-root {
+  position: fixed;
+  z-index: -999;
+  top: 0;
+  left: -10000px;
+  visibility: hidden;
+  pointer-events: none;
+  container-type: inline-size;
+  color: var(--template-text);
+  font-family: 'Source Sans 3', 'Source Sans Pro', sans-serif;
+}
+.measurement-root > div { margin-bottom: 20px; }
+.measurement-root h1,
+.measurement-root h2,
+.measurement-root h3 { margin: 0; color: var(--template-teal); font-family: inherit; font-weight: 700; line-height: 1.1; }
+.measurement-root h1 { font-size: 40px; }
+.measurement-root h2 { font-size: 35px; }
+.measurement-root h3 { font-size: 29px; }
+.measurement-root p,
+.measurement-root li { font-size: 21px; line-height: 1.45; }
+.measurement-root ul,
+.measurement-root ol { margin: 0; padding: 0; list-style: none; }
+.measurement-root li { margin: 8px 0; }
+.measurement-root .figure-frame { height: 240px; }
+.measurement-root .block-code pre { white-space: pre-wrap; }
+.measurement-root blockquote { font: 700 20px/1.35 'Source Sans 3', 'Source Sans Pro', sans-serif; }
+.measurement-root .block-table table { font-size: 21px; }
 
 .continuation-label { display: block; width: fit-content; margin-bottom: 1cqw; padding: 0.3cqw 1cqw; color: #fff; border-radius: 2px; background: var(--template-teal); font-size: 1.25cqw; font-weight: 700; }
 .scene-warning { position: absolute; z-index: 50; top: 3cqw; right: 5.729cqw; padding: 0.4cqw 0.7cqw; color: #8b4b00; background: #ffe5b8; font-size: 1cqw; font-weight: 700; }
@@ -295,15 +430,8 @@
 @container (max-width: 760px) {
   .text-media-grid,
   .media-dominant-grid { grid-template-columns: 1fr; gap: 2cqw; }
+  .block-columns { grid-template-columns: 1fr; gap: 1.8cqw; }
   .media-column .figure-frame { aspect-ratio: 16 / 6; }
-
-  .block-table table,
-  .block-table tbody { display: block; width: 100%; }
-  .block-table tr:first-child { display: none; }
-  .block-table tr:not(:first-child) { display: grid; border-top: 2px solid var(--template-teal); border-bottom: 1px solid var(--template-line); }
-  .block-table td,
-  .block-table td:first-child { width: 100%; display: grid; grid-template-columns: minmax(8em, 28%) minmax(0, 1fr); gap: 1.2em; padding: 0.55em 0; border: 0; white-space: normal; }
-  .block-table td::before { content: attr(data-label); color: var(--template-teal); font-weight: 700; }
 }
 
 /* Fullscreen text never falls below the requested 20px floor. Preview text

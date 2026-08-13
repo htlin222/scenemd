@@ -20,7 +20,7 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
   const options: MarpitImageOptions = {
     alt: '',
     background: false,
-    fit: 'cover',
+    fit: 'contain',
     side: 'none',
     splitSize: '50%',
     width: '',
@@ -34,7 +34,9 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
   for (const token of source.trim().split(/\s+/).filter(Boolean)) {
     const lower = token.toLowerCase()
     if (lower === 'bg') options.background = true
-    else if (lower === 'cover') options.fit = 'cover'
+    // Keep accepting Marpit's `cover` token for source compatibility, but
+    // SceneMD never crops document images. All image scaling is proportional.
+    else if (lower === 'cover') options.fit = 'contain'
     else if (lower === 'contain' || lower === 'fit') options.fit = 'contain'
     else if (lower === 'auto') options.fit = 'auto'
     else if (lower === 'vertical') options.vertical = true
@@ -64,7 +66,7 @@ export function formatMarpitImageAlt(options: MarpitImageOptions): string {
   const tokens: string[] = []
   if (options.background) tokens.push('bg')
   if (options.background && options.side !== 'none') tokens.push(`${options.side}:${options.splitSize || '50%'}`)
-  if (options.background && options.fit !== 'cover') tokens.push(options.fit)
+  if (options.background) tokens.push('contain')
   else if (!options.background && options.fit === 'auto') tokens.push('auto')
   if (options.vertical) tokens.push('vertical')
   if (options.width) tokens.push(`w:${options.width}`)

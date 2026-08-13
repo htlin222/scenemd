@@ -1,7 +1,9 @@
 export type Density = 'compact' | 'balanced' | 'cinematic'
 export type ThemeMode = 'light' | 'dark'
+export type PresentationTheme = 'default' | 'editorial' | 'catppuccin'
 
 export interface PresentationConfig {
+  theme: PresentationTheme
   title: string
   subtitle: string
   seriesName: string
@@ -34,8 +36,10 @@ export type BlockType =
   | 'figure'
   | 'blockquote'
   | 'code'
+  | 'code-group'
   | 'math'
   | 'table'
+  | 'columns'
 
 export interface PresentationBlock {
   id: string
@@ -62,6 +66,7 @@ export interface PresentationBlock {
   inlines?: InlineNode[]
   depth?: number
   ordered?: boolean
+  listStart?: number
   listItems?: InlineNode[][]
   continuation?: boolean
   url?: string
@@ -70,7 +75,15 @@ export interface PresentationBlock {
   caption?: InlineNode[]
   value?: string
   language?: string
+  codeTitle?: string
+  codeLineNumbers?: boolean
+  codeStartLine?: number
+  codeHighlightSteps?: Array<number[] | 'all' | 'none' | 'hide'>
+  codeGroup?: PresentationBlock[]
   tableRows?: string[][]
+  columns?: PresentationBlock[][]
+  estimatedHeight?: number
+  speakerNotes?: string[]
   stepped?: boolean
 }
 

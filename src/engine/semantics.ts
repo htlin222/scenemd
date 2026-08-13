@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { InlineNode, PresentationBlock, SemanticRegion, SourceRange } from './types'
 import { parseMarpitImageAlt } from '../imageSyntax'
+import { remarkBracketCitations } from '../citations'
 
 interface MdPosition {
   start?: { line?: number; column?: number }
@@ -15,9 +16,11 @@ interface MdNode {
   value?: string
   depth?: number
   ordered?: boolean
+  start?: number
   url?: string
   alt?: string
   lang?: string
+  meta?: string
   children?: MdNode[]
   position?: MdPosition
 }
@@ -31,7 +34,7 @@ interface Directives {
   step?: boolean
 }
 
-const processor = unified().use(remarkParse).use(remarkGfm).use(remarkMath)
+const processor = unified().use(remarkParse).use(remarkGfm).use(remarkMath).use(remarkBracketCitations)
 
 function hash(value: string): string {
   let h = 2166136261
@@ -130,6 +133,91 @@ function parseDirective(value: string): Directives | null {
   return { [match[1].toLowerCase()]: true }
 }
 
+function parseColumnsDirective(value: string): 'start' | 'next' | 'end' | null {
+  const normalized = value.trim().toLowerCase()
+  if (/^present:\s*columns(?:\s+\d+)?$/.test(normalized)) return 'start'
+  if (normalized === 'present: column') return 'next'
+  if (normalized === 'present: end-columns') return 'end'
+  return null
+}
+
+function isMarpDirective(value: string): boolean {
+  return /^\s*(?:theme|paginate|header|footer|style|class|color|backgroundcolor|backgroundimage|backgroundposition|backgroundrepeat|backgroundsize)\s*:/i.test(value)
+}
+
+function columnsBlock(columns: PresentationBlock[][], index: number): PresentationBlock | null {
+  const populated = columns.filter((column) => column.length > 0)
+  const first = populated[0]?.[0]
+  const lastColumn = populated[populated.length - 1]
+  const last = lastColumn?.[lastColumn.length - 1]
+  if (!first || !last) return null
+  return {
+    id: `block-${hash(`columns:${first.id}:${last.id}:${index}`)}`,
+    type: 'columns',
+    semanticRole: 'body',
+    importance: 0.7,
+    keepTogether: true,
+    keepWithNext: false,
+    keepWithPrevious: false,
+    breakBefore: 'auto',
+    breakAfter: 'auto',
+    visibility: 'normal',
+    layoutHint: 'auto',
+    sourceRange: { ...first.sourceRange, endLine: last.sourceRange.endLine, endColumn: last.sourceRange.endColumn },
+    columns: populated,
+  }
+}
+
+function parseCodeLines(value: string): number[] | 'all' | 'none' | 'hide' {
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'all' || normalized === 'none' || normalized === 'hide') return normalized
+  const lines = new Set<number>()
+  value.split(',').forEach((part) => {
+    const range = part.trim().match(/^(\d+)(?:-(\d+))?$/)
+    if (!range) return
+    const start = Number(range[1])
+    const end = Number(range[2] ?? range[1])
+    for (let line = Math.min(start, end); line <= Math.max(start, end); line += 1) lines.add(line)
+  })
+  return [...lines]
+}
+
+function applyCodeMeta(block: PresentationBlock, meta = '') {
+  const title = meta.match(/\[([^\]]+)]/)
+  if (title) block.codeTitle = title[1].trim()
+  const lineConfig = meta.match(/\{([^{}]*\b(?:lines|startLine)\s*:[^{}]+)}/i)?.[1]
+  if (lineConfig) {
+    block.codeLineNumbers = /\blines\s*:\s*true\b/i.test(lineConfig)
+    const start = lineConfig.match(/\bstartLine\s*:\s*(\d+)/i)
+    if (start) block.codeStartLine = Math.max(1, Number(start[1]))
+  }
+  const highlight = [...meta.matchAll(/\{([^{}]+)}/g)]
+    .map((match) => match[1])
+    .find((value) => !/:/.test(value) && /(?:\d|all|none|hide)/i.test(value))
+  if (highlight) block.codeHighlightSteps = highlight.split('|').map(parseCodeLines)
+}
+
+function codeGroupBlock(children: PresentationBlock[], index: number): PresentationBlock | null {
+  if (!children.length) return null
+  const first = children[0]
+  const last = children[children.length - 1]
+  return {
+    id: `block-${hash(`code-group:${first.id}:${last.id}:${index}`)}`,
+    type: 'code-group',
+    semanticRole: 'evidence',
+    importance: 0.7,
+    keepTogether: true,
+    keepWithNext: false,
+    keepWithPrevious: false,
+    breakBefore: 'auto',
+    breakAfter: 'auto',
+    visibility: 'normal',
+    layoutHint: 'auto',
+    sourceRange: { ...first.sourceRange, endLine: last.sourceRange.endLine, endColumn: last.sourceRange.endColumn },
+    codeGroup: children,
+  }
+}
+
 function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
   if (node.type === 'heading') {
     const block = baseBlock(node, index, 'heading')
@@ -163,12 +251,15 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
   }
 
   if (node.type === 'list') {
-    const items = (node.children ?? []).map((item) => inlineOf([{ type: 'text', value: textOf(item) }]))
+    // Preserve inline semantics inside list items (including numeric citation
+    // links) instead of flattening the item back to plain text.
+    const items = (node.children ?? []).map((item) => inlineOf(item.children ?? []))
     const chunks: PresentationBlock[] = []
     for (let offset = 0; offset < items.length; offset += 6) {
       const block = baseBlock(node, index + offset, 'list')
       block.listItems = items.slice(offset, offset + 6)
       block.ordered = node.ordered ?? false
+      block.listStart = (node.start ?? 1) + offset
       block.continuation = offset > 0
       block.keepTogether = true
       block.importance = 0.6
@@ -191,6 +282,7 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
     const block = baseBlock(node, index, 'code')
     block.value = node.value ?? ''
     block.language = node.lang ?? 'text'
+    applyCodeMeta(block, node.meta ?? '')
     block.keepTogether = true
     return [block]
   }
@@ -226,28 +318,97 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
 }
 
 export function parsePresentationDocument(markdown: string): PresentationBlock[] {
-  const tree = processor.parse(markdown) as MdNode
+  const tree = processor.runSync(processor.parse(markdown)) as MdNode
   const blocks: PresentationBlock[] = []
   let directives: Directives = {}
+  let referencesDepth: number | null = null
+  let activeColumns: PresentationBlock[][] | null = null
+  let activeCodeGroup: PresentationBlock[] | null = null
+  let pendingSpeakerNotes: string[] = []
+
+  const lastAuthoredBlock = () => activeColumns?.at(-1)?.at(-1) ?? blocks.at(-1)
+
+  const finishColumns = (index: number) => {
+    if (!activeColumns) return
+    const block = columnsBlock(activeColumns, index)
+    if (block) blocks.push(block)
+    activeColumns = null
+  }
+
+  const finishCodeGroup = (index: number) => {
+    if (!activeCodeGroup) return
+    const block = codeGroupBlock(activeCodeGroup, index)
+    if (block) blocks.push(block)
+    activeCodeGroup = null
+  }
 
   for (let index = 0; index < (tree.children ?? []).length; index += 1) {
     const node = (tree.children ?? [])[index]
+    const nodeText = textOf(node).trim()
+    if (node.type === 'paragraph' && nodeText === '::code-group') {
+      finishCodeGroup(index)
+      activeCodeGroup = []
+      continue
+    }
+    if (node.type === 'paragraph' && nodeText === '::' && activeCodeGroup) {
+      finishCodeGroup(index)
+      continue
+    }
     if (node.type === 'html') {
-      const directive = parseDirective((node.value ?? '').replace(/^<!--|-->$/g, '').trim())
+      const comment = (node.value ?? '').replace(/^<!--|-->$/g, '').trim()
+      const columnDirective = parseColumnsDirective(comment)
+      if (columnDirective === 'start') {
+        finishColumns(index)
+        activeColumns = [[]]
+        directives = {}
+        continue
+      }
+      if (columnDirective === 'next' && activeColumns) {
+        if (activeColumns[activeColumns.length - 1].length) activeColumns.push([])
+        continue
+      }
+      if (columnDirective === 'end' && activeColumns) {
+        finishColumns(index)
+        continue
+      }
+      const directive = parseDirective(comment)
       if (directive) directives = { ...directives, ...directive }
+      else if (comment && !isMarpDirective(comment)) {
+        const target = lastAuthoredBlock()
+        if (target) target.speakerNotes = [...(target.speakerNotes ?? []), comment]
+        else pendingSpeakerNotes.push(comment)
+      }
       continue
     }
     if (node.type === 'thematicBreak') {
       directives.break = true
       continue
     }
+    if (node.type === 'heading') {
+      const label = textOf(node).trim().toLowerCase()
+      if ((node.depth ?? 4) <= (referencesDepth ?? 0) && label !== 'references') referencesDepth = null
+      if (label === 'references' && node.depth === 3) referencesDepth = 3
+    }
     const normalized = makeBlocks(node, index)
+    if (activeColumns && node.type === 'heading' && node.depth === 3 && activeColumns[activeColumns.length - 1].length) activeColumns.push([])
     normalized.forEach((block, blockIndex) => {
       applyDirectives(block, blockIndex === 0 ? directives : {})
-      if (block.visibility !== 'hidden') blocks.push(block)
+      if (blockIndex === 0 && pendingSpeakerNotes.length) {
+        block.speakerNotes = [...pendingSpeakerNotes]
+        pendingSpeakerNotes = []
+      }
+      if (referencesDepth !== null && block.type === 'list') block.semanticRole = 'reference'
+      if (block.visibility !== 'hidden') {
+        if (activeCodeGroup && block.type === 'code') activeCodeGroup.push(block)
+        else if (activeColumns) activeColumns[activeColumns.length - 1].push(block)
+        else blocks.push(block)
+      }
     })
     if (normalized.length) directives = {}
   }
+
+  finishColumns((tree.children ?? []).length)
+  finishCodeGroup((tree.children ?? []).length)
 
   return blocks
 }

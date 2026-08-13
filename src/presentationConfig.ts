@@ -2,6 +2,7 @@ import type { PresentationConfig } from './engine/types'
 
 export function defaultPresentationConfig(title = 'Untitled presentation'): PresentationConfig {
   return {
+    theme: 'default',
     title,
     subtitle: '',
     seriesName: 'SceneMD',
@@ -18,7 +19,9 @@ export function normalizePresentationConfig(value: unknown, fallbackTitle: strin
   if (!value || typeof value !== 'object') return fallback
   const source = value as Record<string, unknown>
   const text = (key: keyof PresentationConfig, fallbackValue: string) => typeof source[key] === 'string' ? source[key].slice(0, 300) : fallbackValue
+  const theme = source.theme === 'editorial' || source.theme === 'catppuccin' ? source.theme : 'default'
   return {
+    theme,
     title: text('title', fallback.title).trim() || fallback.title,
     subtitle: text('subtitle', fallback.subtitle),
     seriesName: text('seriesName', fallback.seriesName),

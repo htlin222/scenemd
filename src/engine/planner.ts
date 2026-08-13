@@ -24,13 +24,99 @@ function hash(value: string): string {
 function blockHeight(block: PresentationBlock, measurements: Map<string, number>): number {
   const measured = measurements.get(block.id)
   if (measured) return measured
+  if (block.estimatedHeight) return block.estimatedHeight
   if (block.type === 'heading') return block.depth === 1 ? 112 : 76
   if (block.type === 'figure') return 260
   if (block.type === 'list') return 54 + (block.listItems?.length ?? 1) * 38
   if (block.type === 'code') return 76 + (block.value?.split('\n').length ?? 1) * 24
+  if (block.type === 'code-group') return 96 + Math.max(1, ...(block.codeGroup ?? []).map((child) => child.value?.split('\n').length ?? 1)) * 24
   if (block.type === 'math') return 110
   if (block.type === 'table') return 70 + (block.tableRows?.length ?? 1) * 42
   return 104
+}
+
+function inlineLength(nodes: PresentationBlock['inlines'] = []): number {
+  return nodes.reduce((total, node) => total + ('value' in node ? node.value.length : 'children' in node ? inlineLength(node.children) : 1), 0)
+}
+
+function splitInlineContent(nodes: NonNullable<PresentationBlock['inlines']>, partCount: number): NonNullable<PresentationBlock['inlines']>[] {
+  const target = Math.max(40, Math.ceil(inlineLength(nodes) / partCount))
+  const fragments = nodes.flatMap((node) => {
+    if (node.type !== 'text' || node.value.length <= target) return [node]
+    const pieces: typeof nodes = []
+    let remaining = node.value
+    while (remaining.length > target) {
+      let splitAt = remaining.lastIndexOf(' ', target)
+      if (splitAt < target * 0.55) {
+        const punctuation = [...remaining.slice(0, target + 1).matchAll(/[.!?。！？；;]/g)].at(-1)
+        splitAt = punctuation?.index !== undefined ? punctuation.index + 1 : target
+      }
+      pieces.push({ type: 'text', value: remaining.slice(0, splitAt).trimEnd() })
+      remaining = remaining.slice(splitAt).trimStart()
+    }
+    if (remaining) pieces.push({ type: 'text', value: remaining })
+    return pieces
+  })
+  const groups: NonNullable<PresentationBlock['inlines']>[] = [[]]
+  let currentLength = 0
+  fragments.forEach((fragment) => {
+    const length = inlineLength([fragment])
+    if (groups[groups.length - 1].length && currentLength + length > target && groups.length < partCount) {
+      groups.push([])
+      currentLength = 0
+    }
+    groups[groups.length - 1].push(fragment)
+    currentLength += length
+  })
+  return groups.filter((group) => group.length > 0)
+}
+
+function continuationParts(block: PresentationBlock, measuredHeight: number, capacity: number): PresentationBlock[] {
+  if (measuredHeight <= capacity) return [block]
+  const partCount = Math.max(2, Math.ceil(measuredHeight / (capacity * 0.62)))
+  let parts: PresentationBlock[] = []
+
+  if ((block.type === 'paragraph' || block.type === 'blockquote') && block.inlines?.length) {
+    parts = splitInlineContent(block.inlines, partCount).map((inlines) => ({ ...block, inlines }))
+  } else if (block.type === 'list' && block.listItems?.length) {
+    const size = Math.max(1, Math.ceil(block.listItems.length / partCount))
+    for (let offset = 0; offset < block.listItems.length; offset += size) {
+      parts.push({ ...block, listItems: block.listItems.slice(offset, offset + size), listStart: (block.listStart ?? 1) + offset })
+    }
+  } else if (block.type === 'code' && block.value) {
+    const lines = block.value.split('\n')
+    const size = Math.max(1, Math.ceil(lines.length / partCount))
+    for (let offset = 0; offset < lines.length; offset += size) parts.push({ ...block, value: lines.slice(offset, offset + size).join('\n') })
+  } else if (block.type === 'code-group' && block.codeGroup?.length) {
+    const longest = Math.max(1, ...block.codeGroup.map((child) => child.value?.split('\n').length ?? 1))
+    const size = Math.max(1, Math.ceil(longest / partCount))
+    for (let offset = 0; offset < longest; offset += size) {
+      parts.push({
+        ...block,
+        codeGroup: block.codeGroup.map((child) => ({
+          ...child,
+          value: (child.value ?? '').split('\n').slice(offset, offset + size).join('\n'),
+          codeStartLine: (child.codeStartLine ?? 1) + offset,
+        })).filter((child) => child.value),
+      })
+    }
+  } else if (block.type === 'table' && (block.tableRows?.length ?? 0) > 2) {
+    const [header, ...rows] = block.tableRows ?? []
+    const size = Math.max(1, Math.ceil(rows.length / partCount))
+    for (let offset = 0; offset < rows.length; offset += size) parts.push({ ...block, tableRows: [header, ...rows.slice(offset, offset + size)] })
+  } else if (block.type === 'columns' && (block.columns?.length ?? 0) > 1) {
+    const size = Math.max(1, Math.ceil((block.columns?.length ?? 0) / partCount))
+    for (let offset = 0; offset < (block.columns?.length ?? 0); offset += size) parts.push({ ...block, columns: block.columns?.slice(offset, offset + size) })
+  }
+
+  if (parts.length < 2) return [block]
+  return parts.map((part, index) => ({
+    ...part,
+    id: `${block.id}-part-${index + 1}`,
+    continuation: index > 0,
+    keepWithPrevious: index > 0,
+    estimatedHeight: measuredHeight / parts.length,
+  }))
 }
 
 function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>): number {
@@ -122,8 +208,8 @@ function makeScene(
     fillRatio,
     score,
     scores,
-    warning: fillRatio > 1 ? 'Oversized atomic content' : undefined,
-    continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} — continued` : undefined,
+    warning: undefined,
+    continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
   }
 }
@@ -171,22 +257,24 @@ export function planScenes(
   const previousEnds = new Set(previousPlan?.scenes.map((scene) => scene.endBlockId) ?? [])
 
   for (const region of regions) {
-    const regionUsed = usedHeight(region.blocks, measurements)
+    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements), capacity))
+    const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
+    const regionUsed = usedHeight(plannedBlocks, measurements)
     if (regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
-      const evaluated = evaluate(region.blocks, region.blocks.length, region.blocks.length, regionUsed, capacity, density, previousEnds)
-      scenes.push(makeScene(region, region.blocks, regionUsed, capacity, evaluated.total, evaluated.breakdown))
+      const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
+      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown))
       continue
     }
 
     let cursor = 0
-    while (cursor < region.blocks.length) {
+    while (cursor < plannedBlocks.length) {
       const candidates: Array<ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }> = []
-      const limit = Math.min(region.blocks.length, cursor + 8)
+      const limit = Math.min(plannedBlocks.length, cursor + 8)
       for (let end = cursor + 1; end <= limit; end += 1) {
-        const candidateBlocks = region.blocks.slice(cursor, end)
+        const candidateBlocks = plannedBlocks.slice(cursor, end)
         const used = usedHeight(candidateBlocks, measurements)
         candidates.push({
-          ...evaluate(candidateBlocks, end, region.blocks.length, used, capacity, density, previousEnds),
+          ...evaluate(candidateBlocks, end, plannedBlocks.length, used, capacity, density, previousEnds),
           blocks: candidateBlocks,
           end,
           used,
@@ -194,7 +282,7 @@ export function planScenes(
       }
       const valid = candidates.filter((candidate) => !candidate.invalid)
       const winner = (valid.length ? valid : candidates).sort((a, b) => b.total - a.total)[0]
-      scenes.push(makeScene(region, winner.blocks, winner.used, capacity, winner.total, winner.breakdown))
+      scenes.push(makeScene(planningRegion, winner.blocks, winner.used, capacity, winner.total, winner.breakdown))
       cursor = winner.end
     }
   }

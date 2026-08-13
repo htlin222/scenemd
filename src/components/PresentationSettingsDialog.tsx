@@ -1,7 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Settings2, X } from 'lucide-react'
+import { Palette, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { PresentationConfig } from '../engine/types'
+
+const PRESENTATION_THEMES = [
+  { id: 'default', label: 'Default', detail: 'Template teal', colors: ['#3d6869', '#ffffff', '#111111'] },
+  { id: 'editorial', label: 'Editorial', detail: 'Warm and literary', colors: ['#9a3412', '#f7f1e8', '#2f2923'] },
+  { id: 'catppuccin', label: 'Catppuccin', detail: 'Latte / Mocha', colors: ['#8839ef', '#eff1f5', '#4c4f69'] },
+] as const
 
 interface PresentationSettingsDialogProps {
   value: PresentationConfig
@@ -25,11 +31,12 @@ export function PresentationSettingsDialog({ value, onSave, onClose }: Presentat
     <div className="presentation-settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="presentation-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="presentation-settings-title">
         <header>
-          <div><Settings2 size={18} /><div><small>Presentation</small><h2 id="presentation-settings-title">Cover settings</h2></div></div>
+          <div><Palette size={18} /><div><small>Presentation</small><h2 id="presentation-settings-title">Design &amp; cover</h2></div></div>
           <button onClick={onClose} aria-label="Close presentation settings"><X size={18} /></button>
         </header>
         <div className="presentation-settings-body">
           <form onSubmit={(event) => { event.preventDefault(); onSave(draft); onClose() }}>
+            <fieldset className="presentation-theme-field settings-field-wide"><legend>Theme</legend><div className="presentation-theme-options">{PRESENTATION_THEMES.map((theme) => <button key={theme.id} type="button" className={draft.theme === theme.id ? 'is-active' : ''} onClick={() => setDraft((current) => ({ ...current, theme: theme.id }))}><span className="theme-swatches">{theme.colors.map((color) => <i key={color} style={{ background: color }} />)}</span><strong>{theme.label}</strong><small>{theme.detail}</small></button>)}</div></fieldset>
             <label className="settings-field settings-field-wide"><span>Title</span><input autoFocus value={draft.title} onChange={(event) => update('title', event.target.value)} required /></label>
             <label className="settings-field settings-field-wide"><span>Subtitle</span><textarea value={draft.subtitle} onChange={(event) => update('subtitle', event.target.value)} rows={2} placeholder="A concise description of this presentation" /></label>
             <label className="settings-field"><span>Series name</span><input value={draft.seriesName} onChange={(event) => update('seriesName', event.target.value)} placeholder="Grand rounds" /></label>
@@ -38,10 +45,10 @@ export function PresentationSettingsDialog({ value, onSave, onClose }: Presentat
             <label className="settings-field"><span>Affiliation</span><input value={draft.affiliation} onChange={(event) => update('affiliation', event.target.value)} placeholder="Institution" /></label>
             <label className="settings-field"><span>Email</span><input type="email" value={draft.email} onChange={(event) => update('email', event.target.value)} placeholder="you@example.com" /></label>
             <label className="settings-field"><span>License</span><input value={draft.license} onChange={(event) => update('license', event.target.value)} placeholder="CC BY-NC" /></label>
-            <div className="presentation-settings-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save cover</button></div>
+            <div className="presentation-settings-actions"><button type="button" onClick={onClose}>Cancel</button><button type="submit">Save design</button></div>
           </form>
-          <aside className="cover-config-preview" aria-label="Cover preview">
-            <div className="cover-config-preview-top"><span>{draft.seriesName || 'Series'}</span><time>{draft.date}</time></div>
+          <aside className="cover-config-preview" data-presentation-theme={draft.theme} aria-label="Cover preview">
+            <div className="cover-config-preview-top"><span className="series-name-badge"><span>{draft.seriesName || 'Series'}</span></span><time>{draft.date}</time></div>
             <div className="cover-config-preview-center"><h3>{draft.title || 'Untitled presentation'}</h3>{draft.subtitle && <p>{draft.subtitle}</p>}<hr />{draft.author && <strong>{draft.author}</strong>}{draft.affiliation && <span>{draft.affiliation}</span>}{draft.email && <span>{draft.email}</span>}</div>
             <small>{draft.license}</small>
           </aside>
