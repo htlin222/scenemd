@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
@@ -7,31 +7,41 @@ import {
   Check,
   Clock3,
   Copy,
+  Download,
+  Ellipsis,
   Expand,
   FileText,
   Files,
   Focus,
   GripVertical,
   Link2,
+  MessageCircleQuestionMark,
+  Mic2,
   Moon,
   PanelRight,
+  Palette,
   Play,
   Plus,
   RefreshCw,
   Search,
-  Settings2,
   Share2,
+  SquareLibrary,
   Sun,
   X,
 } from 'lucide-react'
-import { SceneView, BlockView } from './components/SceneView'
+import { buildCitationReferenceMap, SceneView, BlockView, sceneSpeakerNotes } from './components/SceneView'
 import { MarkdownDocumentView, MarkdownEditor, type EditorMode } from './components/MarkdownEditor'
 import { PresentationSettingsDialog } from './components/PresentationSettingsDialog'
 import { HackMDSyncDialog } from './components/HackMDSyncDialog'
+import { BibliographyDialog } from './components/BibliographyDialog'
+import { ExportDialog } from './components/ExportDialog'
+import { PresenterWindow } from './components/PresenterWindow'
+import { PresentationRuntimeTools } from './components/PresentationRuntimeTools'
 import { buildSemanticRegions, parsePresentationDocument } from './engine/semantics'
 import { planScenes, withPresentationCover } from './engine/planner'
 import type { Density, PresentationConfig, ScenePlan, ThemeMode } from './engine/types'
 import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
+import { normalizeMarkdownUrls } from './lib/openevidence'
 
 const DEMO_MARKDOWN = `# Acute Myeloid Leukemia
 
@@ -81,10 +91,60 @@ $$
 Treat the patient, the biology, and the trajectory — not a single snapshot.
 `
 
+const SCENEMD_LLM_PROMPT = `Convert the source content I provide into presentation-ready Markdown for SceneMD.
+
+Return only the finished Markdown, without an explanation or an outer code fence.
+
+Rules:
+- Preserve the meaning, facts, citations, links, and important nuance. Do not invent information.
+- Write an ordinary, coherent document—not a list of manually defined slides.
+- Use one H1 (#) for each major chapter, H2 (##) for sections, and H3 (###) only when genuinely useful.
+- Prefer short paragraphs and concise bullet lists. Each bullet should express one idea.
+- Keep headings descriptive and avoid orphan headings.
+- Use valid GitHub Flavored Markdown for lists, task lists, blockquotes, links, code fences, and tables.
+- For tabular information, use a GFM table with a short header row. Keep cells concise; move lengthy explanations below the table.
+- Preserve images as ![descriptive alt text](full-https-url). Do not use relative image URLs.
+- Cite sources in the text as adjacent numeric markers such as [1][2]. End with a ### References section containing a numbered list; include each DOI as doi:10.xxxx/xxxx or PubMed identifier as PMID: 12345678 so SceneMD can resolve AMA metadata.
+- Use display math as $$ ... $$ and fenced code blocks with a language identifier.
+- Do not add YAML frontmatter. SceneMD cover metadata and visual theme are configured separately.
+- Do not insert slide delimiters such as --- merely to paginate; SceneMD plans scenes automatically.
+- Add presentation hints only when they materially improve delivery, and place each hint immediately before the affected block:
+  <!-- present: break --> forces a scene break.
+  <!-- present: keep --> keeps the next block together.
+  <!-- present: hero --> emphasizes the next image.
+  <!-- present: hide --> hides the next block during presentation.
+  <!-- present: only --> shows the next block only during presentation.
+  <!-- present: step --> reveals the following list item by item.
+  <!-- present: columns --> starts responsive semantic columns. Use an H3 subtitle for each column, then close with <!-- present: end-columns -->. Two H3 groups make two columns; add more H3 groups for more columns.
+- Use an ordinary Marp-compatible HTML comment after scene content for speaker notes, for example <!-- Pause here and emphasize the risk difference. -->. Do not put audience-facing content in the note.
+- Use <!-- present: step --> sparingly for ordered speaking sequences, not every list.
+- Do not include "Scene 1", "Slide 1", speaker instructions, or layout coordinates.
+
+Source content begins below:
+
+[PASTE SOURCE CONTENT HERE]`
+
 const EMPTY_PLAN: ScenePlan = { scenes: [], averageFill: 0, overflowCount: 0, measuredBlockCount: 0 }
 
 type Route = { kind: 'home' } | { kind: 'document'; id: string } | { kind: 'share'; token: string }
 type SaveStatus = 'saved' | 'saving' | 'conflict' | 'offline'
+type HeaderLayout = 'wide' | 'medium' | 'compact'
+
+interface HeaderActionSpec {
+  id: string
+  label: string
+  ariaLabel: string
+  icon: ReactNode
+  onClick: () => void
+  disabled?: boolean
+  busy?: boolean
+}
+
+function headerLayoutForWidth(width: number): HeaderLayout {
+  if (width >= 1540) return 'wide'
+  if (width >= 1040) return 'medium'
+  return 'compact'
+}
 
 interface DocumentSummary {
   id: string
@@ -125,6 +185,13 @@ function titleFromMarkdown(markdown: string, fallback: string): string {
   return markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || fallback
 }
 
+function absoluteSceneImageUrls(markdown: string): string {
+  return markdown.replace(
+    /(!\[[^\]\n]*\]\()\/api\/images\//g,
+    `$1${window.location.origin}/api/images/`,
+  )
+}
+
 function formatUpdated(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'Recently' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
@@ -132,6 +199,14 @@ function formatUpdated(value: string): string {
 
 function previewViewport(width: number) {
   return { width, height: width < 560 ? width * (16 / 9) : Math.max(360, width * 0.5625) }
+}
+
+function blockRevealSteps(block: import('./engine/types').PresentationBlock): number {
+  const listSteps = block.stepped ? block.listItems?.length ?? 0 : 0
+  const codeSteps = Math.max(0, (block.codeHighlightSteps?.length ?? 0) - 1)
+  const groupSteps = Math.max(0, ...(block.codeGroup ?? []).map((child) => Math.max(0, (child.codeHighlightSteps?.length ?? 0) - 1)))
+  const columnSteps = (block.columns ?? []).flat().reduce((total, child) => total + blockRevealSteps(child), 0)
+  return listSteps + codeSteps + groupSteps + columnSteps
 }
 
 function App() {
@@ -156,13 +231,25 @@ function App() {
   const [resizingPreview, setResizingPreview] = useState(false)
   const [editorMode, setEditorMode] = useState<EditorMode>('write')
   const [showCheatsheet, setShowCheatsheet] = useState(false)
+  const [showLlmPrompt, setShowLlmPrompt] = useState(false)
+  const [showBibliography, setShowBibliography] = useState(false)
+  const [showExport, setShowExport] = useState(false)
   const [showPresentationSettings, setShowPresentationSettings] = useState(false)
   const [showHackMDSync, setShowHackMDSync] = useState(false)
+  const [hackMDSyncing, setHackMDSyncing] = useState(false)
+  const [headerLayout, setHeaderLayout] = useState<HeaderLayout>(() => headerLayoutForWidth(window.innerWidth))
+  const [headerOverflowOpen, setHeaderOverflowOpen] = useState(false)
   const [presenting, setPresenting] = useState(false)
+  const [presenterWindow, setPresenterWindow] = useState<Window | null>(null)
+  const [notesHeight, setNotesHeight] = useState(() => {
+    const saved = Number(localStorage.getItem('scenemd-preview-notes-height'))
+    return Number.isFinite(saved) && saved >= 90 && saved <= 320 ? saved : 150
+  })
   const [showShortcutHint, setShowShortcutHint] = useState(false)
   const [sceneIndex, setSceneIndex] = useState(0)
   const [revealIndex, setRevealIndex] = useState(0)
   const [blank, setBlank] = useState<'black' | 'white' | null>(null)
+  const [presentationZoom, setPresentationZoom] = useState(1)
   const [viewport, setViewport] = useState({ width: 960, height: 540 })
   const [measurements, setMeasurements] = useState<Map<string, number>>(new Map())
   const [measuring, setMeasuring] = useState(true)
@@ -172,6 +259,7 @@ function App() {
   const lastSavedMarkdownRef = useRef('')
   const lastSavedPresentationConfigRef = useRef(JSON.stringify(defaultPresentationConfig('Untitled document')))
   const resizingPreviewRef = useRef(false)
+  const headerOverflowRef = useRef<HTMLDivElement>(null)
 
   const blocks = useMemo(() => parsePresentationDocument(markdown), [markdown])
   const regions = useMemo(() => buildSemanticRegions(blocks), [blocks])
@@ -182,6 +270,7 @@ function App() {
     ),
     [regions, measurements, viewport.height, density, presenting, presentationConfig],
   )
+  const citationReferences = useMemo(() => buildCitationReferenceMap(plan.scenes), [plan.scenes])
   const filteredDocuments = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase()
     return query ? documents.filter((document) => document.title.toLocaleLowerCase().includes(query)) : documents
@@ -200,6 +289,39 @@ function App() {
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
+
+  useEffect(() => {
+    let frame = 0
+    const update = () => {
+      window.cancelAnimationFrame(frame)
+      frame = window.requestAnimationFrame(() => setHeaderLayout(headerLayoutForWidth(window.innerWidth)))
+    }
+    window.addEventListener('resize', update, { passive: true })
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('resize', update)
+    }
+  }, [])
+
+  useEffect(() => {
+    setHeaderOverflowOpen(false)
+  }, [headerLayout, route.kind])
+
+  useEffect(() => {
+    if (!headerOverflowOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (!headerOverflowRef.current?.contains(event.target as Node)) setHeaderOverflowOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setHeaderOverflowOpen(false)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [headerOverflowOpen])
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
@@ -226,7 +348,8 @@ function App() {
           const response = await fetch(route.kind === 'document' ? `/api/documents/${route.id}` : `/api/share/${route.token}`, { signal: controller.signal })
           const result = await response.json() as DocumentPayload & { error?: string }
           if (!response.ok) throw new Error(result.error || 'Could not load document')
-          setMarkdown(result.markdown)
+          const loadedMarkdown = absoluteSceneImageUrls(result.markdown)
+          setMarkdown(loadedMarkdown)
           setDocumentTitle(result.title)
           setDocumentRevision(result.revision)
           const config = normalizePresentationConfig(result.presentationConfig, result.title)
@@ -279,8 +402,26 @@ function App() {
   }, [markdown, presentationConfig, documentRevision, documentTitle, loading, route])
 
   useEffect(() => {
+    const previousPlan = previousPlanRef.current
+    setSceneIndex((current) => {
+      const previousScene = previousPlan.scenes[current]
+      if (!previousScene) return Math.min(current, Math.max(0, plan.scenes.length - 1))
+
+      if (previousScene.role === 'cover') {
+        const coverIndex = plan.scenes.findIndex((scene) => scene.role === 'cover')
+        return coverIndex >= 0 ? coverIndex : 0
+      }
+
+      const previousBlockIds = new Set(previousScene.blocks.map((block) => block.id))
+      const matchingBlockIndex = plan.scenes.findIndex((scene) => scene.blocks.some((block) => previousBlockIds.has(block.id)))
+      if (matchingBlockIndex >= 0) return matchingBlockIndex
+
+      const matchingRegionIndex = plan.scenes.findIndex((scene) => scene.regionId === previousScene.regionId && scene.role === previousScene.role)
+      if (matchingRegionIndex >= 0) return matchingRegionIndex
+
+      return Math.min(current, Math.max(0, plan.scenes.length - 1))
+    })
     previousPlanRef.current = plan
-    setSceneIndex((current) => Math.min(current, Math.max(0, plan.scenes.length - 1)))
   }, [plan])
 
   useLayoutEffect(() => {
@@ -337,12 +478,14 @@ function App() {
   }, [blocks, viewport.width, density, theme])
 
   const currentScene = plan.scenes[sceneIndex]
-  const stepCount = currentScene?.blocks.reduce((total, block) => total + (block.stepped ? block.listItems?.length ?? 0 : 0), 0) ?? 0
+  const currentSpeakerNotes = useMemo(() => sceneSpeakerNotes(currentScene), [currentScene])
+  const stepCount = currentScene?.blocks.reduce((total, block) => total + blockRevealSteps(block), 0) ?? 0
   const navigationLabels = useMemo(() => [...new Set(regions
     .filter((region) => region.blocks[0]?.type === 'heading' && region.blocks[0].depth === 1)
     .map((region) => region.headingPath[0])
     .filter((label): label is string => Boolean(label)))], [regions])
   const activeNavigationLabel = regions.find((region) => region.id === currentScene?.regionId)?.headingPath[0]
+  const sceneNavigationLabels = useMemo(() => plan.scenes.map((scene) => regions.find((region) => region.id === scene.regionId)?.headingPath[0]), [plan.scenes, regions])
 
   const navigateToLabel = useCallback((label: string) => {
     const region = regions.find((candidate) => candidate.blocks[0]?.type === 'heading' && candidate.blocks[0].depth === 1 && candidate.headingPath[0] === label)
@@ -362,6 +505,36 @@ function App() {
     else { setSceneIndex((value) => Math.max(0, value - 1)); setRevealIndex(0) }
   }, [revealIndex])
 
+  const closePresenterWindow = useCallback(() => setPresenterWindow(null), [])
+
+  const openPresenterWindow = useCallback(() => {
+    if (presenterWindow && !presenterWindow.closed) { presenterWindow.focus(); return }
+    const popup = window.open('', 'scenemd-presenter', 'popup=yes,width=1280,height=820')
+    if (!popup) return
+    popup.document.title = `${documentTitle} — Presenter`
+    popup.document.documentElement.dataset.theme = theme
+    document.querySelectorAll('style,link[rel="stylesheet"]').forEach((node) => popup.document.head.appendChild(node.cloneNode(true)))
+    popup.document.body.innerHTML = ''
+    popup.document.body.className = 'presenter-window-body'
+    setPresenterWindow(popup)
+  }, [documentTitle, presenterWindow, theme])
+
+  const beginNotesResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = notesHeight
+    const onMove = (moveEvent: PointerEvent) => setNotesHeight(Math.min(320, Math.max(90, startHeight + moveEvent.clientY - startY)))
+    const onEnd = (endEvent: PointerEvent) => {
+      const height = Math.min(320, Math.max(90, startHeight + endEvent.clientY - startY))
+      setNotesHeight(height)
+      localStorage.setItem('scenemd-preview-notes-height', String(Math.round(height)))
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd, { once: true })
+  }
+
   const exitPresentation = useCallback(() => {
     setPresenting(false)
     setBlank(null)
@@ -375,11 +548,15 @@ function App() {
       else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); goPrevious() }
       else if (event.key.toLowerCase() === 'b') setBlank((value) => value === 'black' ? null : 'black')
       else if (event.key.toLowerCase() === 'w') setBlank((value) => value === 'white' ? null : 'white')
+      else if (event.key.toLowerCase() === 's') openPresenterWindow()
+      else if (event.key === '+' || event.key === '=') setPresentationZoom((value) => Math.min(1.5, Number((value + 0.1).toFixed(2))))
+      else if (event.key === '-') setPresentationZoom((value) => Math.max(0.75, Number((value - 0.1).toFixed(2))))
+      else if (event.key === '0') setPresentationZoom(1)
       else if (event.key === 'Escape') exitPresentation()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [presenting, goNext, goPrevious, exitPresentation])
+  }, [presenting, goNext, goPrevious, exitPresentation, openPresenterWindow])
 
   useEffect(() => {
     if (!presenting) { setShowShortcutHint(false); return }
@@ -459,15 +636,42 @@ function App() {
     }
   }
 
-  const renderThemeButton = () => (
-    <button className="icon-button" onClick={() => setTheme((value) => value === 'light' ? 'dark' : 'light')} title={`Use ${theme === 'light' ? 'dark' : 'light'} mode`} aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} mode`}>
+  const renderThemeButton = (inOverflow = false) => (
+    <button className={inOverflow ? 'header-overflow-item' : 'icon-button'} onClick={() => { setTheme((value) => value === 'light' ? 'dark' : 'light'); if (inOverflow) setHeaderOverflowOpen(false) }} title={`Use ${theme === 'light' ? 'dark' : 'light'} mode`} aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} mode`}>
       {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
+      {inOverflow && <span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span>}
     </button>
   )
 
   const saveLabel = saveStatus === 'saving' ? 'Saving…' : saveStatus === 'conflict' ? 'Edit conflict' : saveStatus === 'offline' ? 'Save failed' : 'Saved'
   const isReadOnlyShare = route.kind === 'share'
   const activeDocumentId = route.kind === 'document' ? route.id : 'readonly'
+  const documentHeaderActions: HeaderActionSpec[] = isReadOnlyShare ? [] : [
+    { id: 'design', label: 'Design', ariaLabel: 'Open presentation design settings', icon: <Palette size={16} />, onClick: () => setShowPresentationSettings(true) },
+    { id: 'hackmd', label: 'HackMD', ariaLabel: 'Sync document with HackMD', icon: <RefreshCw className={`sync-rotation-icon${hackMDSyncing ? ' is-spinning' : ''}`} size={16} />, onClick: () => setShowHackMDSync(true), busy: hackMDSyncing },
+    { id: 'prompt', label: 'LLM Prompt', ariaLabel: 'Open reusable SceneMD LLM prompt', icon: <MessageCircleQuestionMark size={16} />, onClick: () => setShowLlmPrompt(true) },
+    { id: 'library', label: 'Library', ariaLabel: 'Open generated BibTeX bibliography', icon: <SquareLibrary size={16} />, onClick: () => setShowBibliography(true) },
+    { id: 'export', label: 'Export', ariaLabel: 'Export document', icon: <Download size={16} />, onClick: () => setShowExport(true) },
+    { id: 'cheatsheet', label: 'Cheat sheet', ariaLabel: 'Open Markdown and presentation cheat sheet', icon: <BookOpen size={16} />, onClick: () => setShowCheatsheet(true) },
+    { id: 'share', label: shareBusy ? 'Sharing…' : 'Share', ariaLabel: 'Create read-only share link', icon: <Share2 size={16} />, onClick: () => { void createShareLink() }, disabled: shareBusy },
+  ]
+  const directActionIds = headerLayout === 'wide'
+    ? new Set(documentHeaderActions.map((action) => action.id))
+    : headerLayout === 'medium' ? new Set(['design', 'export']) : new Set<string>()
+  const directHeaderActions = documentHeaderActions.filter((action) => directActionIds.has(action.id))
+  const overflowHeaderActions = documentHeaderActions.filter((action) => !directActionIds.has(action.id))
+  const themeInOverflow = headerLayout === 'compact' && !isReadOnlyShare
+  const hasHeaderOverflow = !isReadOnlyShare && (themeInOverflow || overflowHeaderActions.length > 0)
+  const renderDocumentHeaderAction = (action: HeaderActionSpec, inOverflow = false) => (
+    <button
+      key={action.id}
+      className={inOverflow ? 'header-overflow-item' : 'cheatsheet-button'}
+      onClick={() => { action.onClick(); if (inOverflow) setHeaderOverflowOpen(false) }}
+      disabled={action.disabled}
+      aria-label={action.ariaLabel}
+      aria-busy={action.busy}
+    >{action.icon}<span>{action.label}</span></button>
+  )
 
   return (
     <div className="app-shell">
@@ -478,12 +682,16 @@ function App() {
         </button>
         {route.kind === 'home' ? <div className="document-breadcrumb"><Files size={14} /><span>Documents</span><small>{documents.length} files</small></div> : <div className="document-breadcrumb"><FileText size={14} /><span>{documentTitle}</span><small>{isReadOnlyShare ? 'Read only' : saveLabel}</small></div>}
         <nav className="header-actions" aria-label="Document actions">
-          {renderThemeButton()}
+          {(!themeInOverflow || route.kind === 'home' || isReadOnlyShare) && renderThemeButton()}
           {route.kind === 'home' ? <button className="present-button" onClick={() => void createDocument()} disabled={creating}><Plus size={16} /> {creating ? 'Creating…' : 'New document'}</button> : <>
-            {!isReadOnlyShare && <button className="cheatsheet-button" onClick={() => setShowPresentationSettings(true)} aria-label="Open presentation cover settings"><Settings2 size={16} /> Cover</button>}
-            {!isReadOnlyShare && <button className="cheatsheet-button" onClick={() => setShowHackMDSync(true)} aria-label="Sync document with HackMD"><RefreshCw size={16} /> HackMD</button>}
-            {!isReadOnlyShare && <button className="cheatsheet-button" onClick={() => setShowCheatsheet(true)} aria-label="Open Markdown and presentation cheat sheet"><BookOpen size={16} /> Cheat sheet</button>}
-            {!isReadOnlyShare && <button className="cheatsheet-button" onClick={() => void createShareLink()} disabled={shareBusy} aria-label="Create read-only share link"><Share2 size={16} /> {shareBusy ? 'Sharing…' : 'Share'}</button>}
+            {directHeaderActions.map((action) => renderDocumentHeaderAction(action))}
+            {hasHeaderOverflow && <div className="header-overflow" ref={headerOverflowRef}>
+              <button className={`header-overflow-trigger${headerOverflowOpen ? ' is-active' : ''}`} onClick={() => setHeaderOverflowOpen((open) => !open)} aria-label="More document actions" aria-expanded={headerOverflowOpen} aria-haspopup="menu"><Ellipsis size={18} /></button>
+              {headerOverflowOpen && <div className="header-overflow-menu" role="menu">
+                {themeInOverflow && renderThemeButton(true)}
+                {overflowHeaderActions.map((action) => renderDocumentHeaderAction(action, true))}
+              </div>}
+            </div>}
             {!isReadOnlyShare && <button className={`preview-button ${showPreview ? 'is-active' : ''}`} onClick={togglePreview} aria-label={showPreview ? 'Close presentation preview' : 'Open presentation preview'}><PanelRight size={16} /> Scenes</button>}
             <button className="present-button" onClick={startPresentation}><Play size={15} fill="currentColor" /> Present</button>
           </>}
@@ -521,7 +729,7 @@ function App() {
         <main className={`workspace ${showPreview ? 'is-preview-open' : ''}${resizingPreview ? ' is-resizing-preview' : ''}`} id="top" style={showPreview ? { '--preview-width': `${previewWidth}px` } as React.CSSProperties : undefined}>
           <section className="editor-panel" aria-label="Markdown editor">
             <div className="editor-wrap">
-              <MarkdownEditor value={markdown} onChange={(value) => { setMarkdown(value); setDocumentTitle(titleFromMarkdown(value, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} />
+              <MarkdownEditor value={markdown} onChange={(value) => { const normalized = normalizeMarkdownUrls(value); setMarkdown(normalized); setDocumentTitle(titleFromMarkdown(normalized, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} />
             </div>
           </section>
 
@@ -530,6 +738,7 @@ function App() {
             <div className="preview-toolbar">
               <div className="preview-title"><Focus size={15} /><strong>Scenes</strong><span className={measuring ? 'status-dot is-working' : 'status-dot'} /></div>
               <div className="preview-tools">
+                <button className="icon-button" onClick={openPresenterWindow} title="Open presenter window" aria-label="Open presenter window"><Mic2 size={16} /></button>
                 <button className={`icon-button ${debug ? 'is-active' : ''}`} onClick={() => setDebug((value) => !value)} title="Toggle planner debug overlay" aria-label="Toggle planner debug overlay"><Bug size={16} /></button>
                 <div className="density-switch" aria-label="Presentation density">
                   {(['compact', 'balanced', 'cinematic'] as Density[]).map((option) => <button key={option} className={density === option ? 'is-active' : ''} onClick={() => setDensity(option)}>{option}</button>)}
@@ -537,9 +746,14 @@ function App() {
                 <button className="icon-button" onClick={() => setShowPreview(false)} aria-label="Close preview"><X size={17} /></button>
               </div>
             </div>
-            <div className="preview-area">
+            <div className="preview-area" style={{ '--notes-height': `${notesHeight}px` } as React.CSSProperties}>
               <div className="preview-meta"><span>{plan.scenes.length} semantic scenes</span><span>{Math.round(plan.averageFill * 100)}% avg fill</span><span>{plan.overflowCount === 0 ? <><Check size={12} /> no overflow</> : `${plan.overflowCount} overflow`}</span></div>
-              <div className={`stage-shell ${viewport.width < 560 ? 'is-narrow' : ''}`} ref={previewRef}>{currentScene ? <SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={stepCount} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} /> : <div className="empty-state">Start writing to compose your first scene.</div>}</div>
+              <div className={`stage-shell ${viewport.width < 560 ? 'is-narrow' : ''}`} ref={previewRef}>{currentScene ? <SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={stepCount} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /> : <div className="empty-state">Start writing to compose your first scene.</div>}</div>
+              <button className="preview-notes-resize" onPointerDown={beginNotesResize} aria-label="Resize speaker notes"><span /></button>
+              <section className="preview-speaker-notes" style={{ height: notesHeight }} aria-label="Speaker notes for current scene">
+                <header><span>Speaker notes</span><small>Marp comments · <kbd>S</kbd> presenter</small></header>
+                <div>{currentSpeakerNotes.length ? currentSpeakerNotes.map((note, index) => <p key={index}>{note}</p>) : <p className="is-empty">Add an HTML comment after scene content to create a speaker note.</p>}</div>
+              </section>
               <div className="scene-nav">
                 <button className="icon-button" onClick={goPrevious} disabled={sceneIndex === 0} aria-label="Previous scene"><ArrowLeft size={16} /></button>
                 <div className="scene-dots" aria-label={`Scene ${sceneIndex + 1} of ${plan.scenes.length}`}>{plan.scenes.map((scene, index) => <button key={scene.id} className={index === sceneIndex ? 'is-active' : ''} onClick={() => { setSceneIndex(index); setRevealIndex(0) }} aria-label={`Go to scene ${index + 1}`} />)}</div>
@@ -552,9 +766,12 @@ function App() {
       )}
 
       {showCheatsheet && <Cheatsheet onClose={() => setShowCheatsheet(false)} />}
+      {showLlmPrompt && <LlmPromptDialog onClose={() => setShowLlmPrompt(false)} />}
+      {showBibliography && <BibliographyDialog markdown={markdown} documentTitle={documentTitle} onClose={() => setShowBibliography(false)} />}
+      {showExport && <ExportDialog markdown={markdown} title={documentTitle} scenes={plan.scenes} presentationConfig={presentationConfig} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onClose={() => setShowExport(false)} />}
       {showPresentationSettings && <PresentationSettingsDialog value={presentationConfig} onSave={(config) => { setPresentationConfig(config); setSceneIndex(0) }} onClose={() => setShowPresentationSettings(false)} />}
-      {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onClose={() => setShowHackMDSync(false)} onDocument={(document) => {
-        setMarkdown(document.markdown)
+      {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={(document) => {
+        setMarkdown(absoluteSceneImageUrls(document.markdown))
         setDocumentTitle(document.title)
         setDocumentRevision(document.revision)
         setPresentationConfig(document.presentationConfig)
@@ -562,14 +779,16 @@ function App() {
         lastSavedPresentationConfigRef.current = JSON.stringify(document.presentationConfig)
         setSaveStatus('saved')
       }} />}
+      {presenterWindow && !presenterWindow.closed && <PresenterWindow target={presenterWindow} scenes={plan.scenes} sceneIndex={sceneIndex} revealIndex={revealIndex} presentationConfig={presentationConfig} citationReferences={citationReferences} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onPrevious={goPrevious} onNext={goNext} onBlack={() => setBlank((value) => value === 'black' ? null : 'black')} onClosed={closePresenterWindow} />}
       {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareLink(null) }}><aside className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => setShareLink(null)}>Done</button></aside></div>}
 
       {route.kind !== 'home' && <div className="measurement-root" ref={measureRef} aria-hidden="true" style={{ width: Math.max(320, viewport.width - 150) }}>{blocks.map((block) => <div data-measure-id={block.id} key={block.id}><BlockView block={block} measurement /></div>)}</div>}
 
       {presenting && currentScene && <div className="presentation-overlay" role="dialog" aria-label="Presentation mode">
-        <SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={revealIndex} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} />
-        <div className="presentation-controls"><button onClick={goPrevious} aria-label="Previous"><ArrowLeft size={18} /></button><span>{sceneIndex + 1} / {plan.scenes.length}</span><button onClick={goNext} aria-label="Next"><ArrowRight size={18} /></button><span className="control-separator" />{!isReadOnlyShare && <button onClick={() => setDebug((value) => !value)} aria-label="Toggle debug"><Bug size={17} /></button>}<button onClick={exitPresentation} aria-label="Exit presentation"><X size={18} /></button></div>
-        <div className={`keyboard-hint ${showShortcutHint ? 'is-visible' : ''}`}><span><kbd>←</kbd><kbd>→</kbd> navigate</span><span><kbd>B</kbd> black</span><span><kbd>W</kbd> white</span><span><kbd>Esc</kbd> exit</span></div>
+        <div className="presentation-zoom-layer" style={{ transform: `scale(${presentationZoom})` }}><SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={revealIndex} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /></div>
+        <PresentationRuntimeTools sceneId={currentScene.id} zoom={presentationZoom} onZoomChange={setPresentationZoom} />
+        <div className="presentation-controls"><button onClick={goPrevious} aria-label="Previous"><ArrowLeft size={18} /></button><span>{sceneIndex + 1} / {plan.scenes.length}</span><button onClick={goNext} aria-label="Next"><ArrowRight size={18} /></button><span className="control-separator" /><button onClick={openPresenterWindow} aria-label="Open presenter window"><Mic2 size={17} /></button>{!isReadOnlyShare && <button onClick={() => setDebug((value) => !value)} aria-label="Toggle debug"><Bug size={17} /></button>}<button onClick={exitPresentation} aria-label="Exit presentation"><X size={18} /></button></div>
+        <div className={`keyboard-hint ${showShortcutHint ? 'is-visible' : ''}`}><span><kbd>←</kbd><kbd>→</kbd> navigate</span><span><kbd>S</kbd> speaker</span><span><kbd>B</kbd> black</span><span><kbd>W</kbd> white</span><span><kbd>Esc</kbd> exit</span></div>
         {blank && <div className={`blank-screen blank-${blank}`} onClick={() => setBlank(null)} />}
       </div>}
 
@@ -582,11 +801,38 @@ function Cheatsheet({ onClose }: { onClose: () => void }) {
   return <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="cheatsheet-dialog" role="dialog" aria-modal="true" aria-labelledby="cheatsheet-title">
     <div className="cheatsheet-heading"><div><span>Reference</span><h2 id="cheatsheet-title">Markdown cheat sheet</h2></div><button className="icon-button" onClick={onClose} aria-label="Close cheat sheet"><X size={18} /></button></div>
     <div className="cheatsheet-grid"><section><h3>Markdown</h3><dl>
-      <div><dt><code># Title</code></dt><dd>Document chapter</dd></div><div><dt><code>## Section</code></dt><dd>Section heading</dd></div><div><dt><code>**bold**</code></dt><dd>Bold text</dd></div><div><dt><code>_italic_</code></dt><dd>Italic text</dd></div><div><dt><code>- Item</code></dt><dd>Bulleted list</dd></div><div><dt><code>1. Item</code></dt><dd>Numbered list</dd></div><div><dt><code>&gt; Quote</code></dt><dd>Block quote</dd></div><div><dt><code>[text](url)</code></dt><dd>Link</dd></div><div><dt><code>![alt](url)</code></dt><dd>Image · click its syntax for visual controls</dd></div><div><dt><code>![w:400px](url)</code></dt><dd>Marpit image sizing</dd></div><div><dt><code>![bg right:40%](url)</code></dt><dd>Marpit scene background</dd></div><div><dt><code>```ts</code></dt><dd>Code block</dd></div><div><dt><code>$$ x $$</code></dt><dd>Display math</dd></div>
+      <div><dt><code># Title</code></dt><dd>Document chapter</dd></div><div><dt><code>## Section</code></dt><dd>Section heading</dd></div><div><dt><code>**bold**</code></dt><dd>Bold text</dd></div><div><dt><code>_italic_</code></dt><dd>Italic text</dd></div><div><dt><code>- Item</code></dt><dd>Bulleted list</dd></div><div><dt><code>1. Item</code></dt><dd>Numbered list</dd></div><div><dt><code>&gt; Quote</code></dt><dd>Block quote</dd></div><div><dt><code>[text](url)</code></dt><dd>Link</dd></div><div><dt><code>[1][2]</code></dt><dd>Adjacent numeric citations</dd></div><div><dt><code>doi:10.xxxx/xxxx</code></dt><dd>Resolvable DOI in References</dd></div><div><dt><code>PMID: 12345678</code></dt><dd>Resolvable PubMed citation</dd></div><div><dt><code>![alt](url)</code></dt><dd>Proportional inline image preview</dd></div><div><dt><code>![w:400px](url)</code></dt><dd>Marpit proportional image sizing</dd></div><div><dt><code>```ts &#123;2-3|5|all&#125;</code></dt><dd>Progressive code line highlighting</dd></div><div><dt><code>&#123;lines:true,startLine:5&#125;</code></dt><dd>Code line numbers and starting line</dd></div><div><dt><code>```mermaid</code></dt><dd>Responsive Mermaid diagram</dd></div><div><dt><code>::code-group</code></dt><dd>Tabbed code alternatives</dd></div><div><dt><code>$$ x $$</code></dt><dd>Display math</dd></div>
     </dl></section><section><h3>Presentation hints</h3><dl>
-      <div><dt><code>&lt;!-- present: break --&gt;</code></dt><dd>Force a scene break</dd></div><div><dt><code>&lt;!-- present: keep --&gt;</code></dt><dd>Keep the next block together</dd></div><div><dt><code>&lt;!-- present: hero --&gt;</code></dt><dd>Emphasize the next image</dd></div><div><dt><code>&lt;!-- present: hide --&gt;</code></dt><dd>Hide the next block in presentation</dd></div><div><dt><code>&lt;!-- present: only --&gt;</code></dt><dd>Show the next block only in presentation</dd></div><div><dt><code>&lt;!-- present: step --&gt;</code></dt><dd>Reveal the next list item by item</dd></div>
+      <div><dt><code>&lt;!-- present: break --&gt;</code></dt><dd>Force a scene break</dd></div><div><dt><code>&lt;!-- present: keep --&gt;</code></dt><dd>Keep the next block together</dd></div><div><dt><code>&lt;!-- present: hero --&gt;</code></dt><dd>Emphasize the next image</dd></div><div><dt><code>&lt;!-- present: hide --&gt;</code></dt><dd>Hide the next block in presentation</dd></div><div><dt><code>&lt;!-- present: only --&gt;</code></dt><dd>Show the next block only in presentation</dd></div><div><dt><code>&lt;!-- present: step --&gt;</code></dt><dd>Reveal the next list item by item</dd></div><div><dt><code>&lt;!-- present: columns --&gt;</code></dt><dd>Start responsive columns; each H3 starts a column</dd></div><div><dt><code>&lt;!-- present: column --&gt;</code></dt><dd>Start another column without a subtitle</dd></div><div><dt><code>&lt;!-- present: end-columns --&gt;</code></dt><dd>End the column group</dd></div><div><dt><code>&lt;!-- speaker note --&gt;</code></dt><dd>Marp-compatible note for the current scene</dd></div><div><dt><code>[click]</code></dt><dd>Advance presenter-note emphasis with reveals</dd></div><div><dt><code>+ / − / 0</code></dt><dd>Zoom presentation content</dd></div>
     </dl><p>Hints apply to the block immediately following the comment. Type <code>&lt;!-- present:</code> in the editor to autocomplete one.</p></section></div>
   </aside></div>
+}
+
+function LlmPromptDialog({ onClose }: { onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [onClose])
+
+  const copyPrompt = async () => {
+    await navigator.clipboard.writeText(SCENEMD_LLM_PROMPT)
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1800)
+  }
+
+  return <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <aside className="llm-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="llm-prompt-title">
+      <div className="cheatsheet-heading"><div><span>Reusable prompt</span><h2 id="llm-prompt-title">Prepare content for SceneMD</h2></div><button className="icon-button" onClick={onClose} aria-label="Close LLM prompt"><X size={18} /></button></div>
+      <div className="llm-prompt-content">
+        <p>Copy this into any LLM, then replace the final placeholder with your source content.</p>
+        <textarea value={SCENEMD_LLM_PROMPT} readOnly aria-label="SceneMD conversion prompt" spellCheck={false} />
+        <button className="llm-prompt-copy" onClick={() => void copyPrompt()}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Copied' : 'Copy prompt'}</button>
+      </div>
+    </aside>
+  </div>
 }
 
 export default App

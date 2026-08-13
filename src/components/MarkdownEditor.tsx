@@ -1,5 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { basicSetup, EditorView } from 'codemirror'
+import { Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
+import { StateField, type EditorState, type Range } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
@@ -11,19 +14,26 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import {
   Bold,
+  BookPlus,
   Check,
   Code2,
   Columns2,
   Eye,
+  GitBranch,
   Heading2,
+  Hash,
   Image,
   Italic,
   Link,
   List,
   ListChecks,
+  ListTree,
   ListOrdered,
   Minus,
   LoaderCircle,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelsTopLeft,
   Pencil,
   Quote,
   RotateCcw,
@@ -35,12 +45,58 @@ import {
   X,
 } from 'lucide-react'
 import type { ThemeMode } from '../engine/types'
+import {
+  existingCitationReferenceNumber,
+  insertCitationReference,
+  normalizeCitationIdentifier,
+  remarkBracketCitations,
+  type CitationIdentifier,
+} from '../citations'
 import { formatMarpitImageAlt, imageFilterCss, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
+import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
 
 export type EditorMode = 'write' | 'split' | 'preview'
 
-function documentVisibleMarkdown(value: string): string {
+class MarkdownImagePreviewWidget extends WidgetType {
+  constructor(readonly url: string, readonly alt: string) { super() }
+  eq(other: MarkdownImagePreviewWidget) { return other.url === this.url && other.alt === this.alt }
+  toDOM() {
+    const figure = document.createElement('figure')
+    figure.className = 'cm-image-preview'
+    const image = document.createElement('img')
+    image.src = this.url
+    image.alt = this.alt
+    image.loading = 'lazy'
+    figure.appendChild(image)
+    if (this.alt) {
+      const caption = document.createElement('figcaption')
+      caption.textContent = this.alt
+      figure.appendChild(caption)
+    }
+    return figure
+  }
+  ignoreEvent() { return false }
+}
+
+function imagePreviewDecorations(state: EditorState): DecorationSet {
+  const decorations: Range<Decoration>[] = []
+  for (let lineNumber = 1; lineNumber <= state.doc.lines; lineNumber += 1) {
+    const line = state.doc.line(lineNumber)
+    const match = line.text.match(/!\[([^\]]*)]\((https?:\/\/[^\s)]+)\)/)
+    if (!match) continue
+    decorations.push(Decoration.widget({ widget: new MarkdownImagePreviewWidget(match[2], match[1]), block: true, side: 1 }).range(line.to))
+  }
+  return Decoration.set(decorations, true)
+}
+
+const markdownImagePreviews = StateField.define<DecorationSet>({
+  create: imagePreviewDecorations,
+  update(value, transaction) { return transaction.docChanged ? imagePreviewDecorations(transaction.state) : value.map(transaction.changes) },
+  provide: (field) => EditorView.decorations.from(field),
+})
+
+export function documentVisibleMarkdown(value: string): string {
   const lines = value.split('\n')
   const visible: string[] = []
   let hiddenMode: 'await' | 'list' | 'paragraph' | 'fence' | null = null
@@ -86,16 +142,21 @@ export function MarkdownDocumentView({ value, className = '' }: { value: string;
   return (
     <article className={`markdown-document ${className}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkBracketCitations]}
         rehypePlugins={[rehypeKatex]}
         skipHtml
         components={{
+          a({ href, children }) {
+            return href?.startsWith('#reference-')
+              ? <sup className="citation-marker"><a href={href}>{children}</a></sup>
+              : <a href={href}>{children}</a>
+          },
           img({ alt = '', src = '' }) {
             const options = parseMarpitImageAlt(alt)
             const style: CSSProperties = {
               width: options.width || undefined,
               height: options.height || undefined,
-              objectFit: options.fit === 'auto' ? 'none' : options.fit,
+              objectFit: 'contain',
               filter: imageFilterCss(options.filters),
             }
             return <img src={src} alt={options.alt} style={style} />
@@ -114,6 +175,7 @@ interface MarkdownEditorProps {
   onModeChange: (mode: EditorMode) => void
   onReset: () => void
   documentId: string
+  saveStatus: 'saved' | 'saving' | 'conflict' | 'offline'
 }
 
 interface EditorStatus {
@@ -147,6 +209,55 @@ interface ImageToolState {
   top: number
 }
 
+interface CitationImportState {
+  identifier: string
+  from: number
+  to: number
+}
+
+interface CitationLookupState {
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  citation: string
+  error: string
+  existingNumber?: number
+  identifier?: CitationIdentifier
+}
+
+interface OutlineItem {
+  level: 1 | 2 | 3
+  text: string
+  offset: number
+  line: number
+  previewIndex: number
+}
+
+function documentOutline(value: string): OutlineItem[] {
+  const visible = documentVisibleMarkdown(value)
+  const outline: OutlineItem[] = []
+  let sourceCursor = 0
+  visible.split('\n').forEach((line) => {
+    const sourceOffset = value.indexOf(line, sourceCursor)
+    if (sourceOffset >= 0) sourceCursor = sourceOffset + line.length
+    const match = line.match(/^\s{0,3}(#{1,3})\s+(.+?)\s*#*\s*$/)
+    if (!match || sourceOffset < 0) return
+    const text = match[2]
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+      .replace(/[*_~`]/g, '')
+      .replace(/<[^>]+>/g, '')
+      .trim()
+    if (!text) return
+    outline.push({
+      level: match[1].length as OutlineItem['level'],
+      text,
+      offset: sourceOffset + line.indexOf('#'),
+      line: value.slice(0, sourceOffset).split('\n').length,
+      previewIndex: outline.length,
+    })
+  })
+  return outline
+}
+
 const PRESENTATION_HINTS = [
   { label: '<!-- present: break -->', detail: 'Force a scene break' },
   { label: '<!-- present: keep -->', detail: 'Keep the next block together' },
@@ -154,6 +265,9 @@ const PRESENTATION_HINTS = [
   { label: '<!-- present: hide -->', detail: 'Hide the next block in presentation' },
   { label: '<!-- present: only -->', detail: 'Show the next block only in presentation' },
   { label: '<!-- present: step -->', detail: 'Reveal the next list item by item' },
+  { label: '<!-- present: columns -->', detail: 'Start responsive semantic columns' },
+  { label: '<!-- present: column -->', detail: 'Start another column' },
+  { label: '<!-- present: end-columns -->', detail: 'End semantic columns' },
 ]
 
 function presentationHintCompletion(context: CompletionContext): CompletionResult | null {
@@ -223,39 +337,89 @@ function insertBlock(view: EditorView, content: string) {
   view.focus()
 }
 
-function convertPastedTable(view: EditorView) {
-  const selection = view.state.selection.main
-  let from = selection.from
-  let to = selection.to
+function selectionPoints(value: string): string[] {
+  const linePoints = value.split(/\r?\n/).map((line) => line.trim().replace(/^[-+*]\s+/, '')).filter(Boolean)
+  if (linePoints.length > 1) return linePoints
+  const sentences = value.replace(/\s+/g, ' ').trim().match(/[^.!?。！？；;]+[.!?。！？；;]?/g)
+  return sentences?.map((sentence) => sentence.trim()).filter(Boolean) ?? []
+}
 
-  if (selection.empty) {
-    const cursorLine = view.state.doc.lineAt(selection.head)
-    if (!cursorLine.text.includes('\t')) return
-    let first = cursorLine.number
-    let last = cursorLine.number
-    while (first > 1 && view.state.doc.line(first - 1).text.includes('\t')) first -= 1
-    while (last < view.state.doc.lines && view.state.doc.line(last + 1).text.includes('\t')) last += 1
-    from = view.state.doc.line(first).from
-    to = view.state.doc.line(last).to
+function columnsMarkdown(value: string): string {
+  const points = selectionPoints(value)
+  const midpoint = Math.max(1, Math.ceil(points.length / 2))
+  const left = points.slice(0, midpoint)
+  const right = points.slice(midpoint)
+  const bullets = (items: string[], fallback: string) => (items.length ? items : [fallback]).map((item) => `- ${item}`).join('\n')
+  return `<!-- present: columns -->\n### Key points\n\n${bullets(left, 'Add a key point')}\n\n### Details\n\n${bullets(right, 'Add supporting detail')}\n<!-- present: end-columns -->`
+}
+
+function insertColumns(view: EditorView) {
+  const { from, to } = view.state.selection.main
+  const selected = view.state.sliceDoc(from, to)
+  const content = columnsMarkdown(selected)
+  const lineStart = view.state.doc.lineAt(from).from
+  const prefix = lineStart === 0 ? '' : '\n'
+  const insert = `${prefix}${content}\n`
+  view.dispatch({ changes: { from: lineStart, to, insert }, selection: { anchor: lineStart + insert.length } })
+  view.focus()
+}
+
+function parseDelimitedTable(value: string, delimiter: ',' | '\t'): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '"') {
+      if (quoted && value[index + 1] === '"') { cell += '"'; index += 1 } else quoted = !quoted
+    } else if (character === delimiter && !quoted) {
+      row.push(cell); cell = ''
+    } else if ((character === '\n' || character === '\r') && !quoted) {
+      if (character === '\r' && value[index + 1] === '\n') index += 1
+      row.push(cell); cell = ''
+      if (row.some((entry) => entry.trim())) rows.push(row)
+      row = []
+    } else {
+      cell += character
+    }
   }
+  row.push(cell)
+  if (row.some((entry) => entry.trim())) rows.push(row)
+  return rows
+}
 
-  const source = view.state.sliceDoc(from, to).trim()
-  const rows = source.split(/\r?\n/).filter((line) => line.trim()).map((line) => line.split('\t'))
+function tableFromHtml(html: string): string[][] {
+  if (!html.trim()) return []
+  const parsed = new DOMParser().parseFromString(html, 'text/html')
+  const table = parsed.querySelector('table')
+  if (!table) return []
+  return [...table.querySelectorAll('tr')].map((row) => [...row.querySelectorAll(':scope > th, :scope > td')].map((cell) => {
+    const clone = cell.cloneNode(true) as HTMLElement
+    clone.querySelectorAll('br').forEach((breakElement) => breakElement.replaceWith(' · '))
+    return clone.textContent?.replace(/\s+/g, ' ').trim() ?? ''
+  })).filter((row) => row.length > 0)
+}
+
+function detectPastedTable(source: string, clipboardHtml = ''): { rows: string[][]; format: 'Word / HTML' | 'TSV' | 'CSV' | null } {
+  const htmlRows = tableFromHtml(clipboardHtml || (/\<table[\s>]/i.test(source) ? source : ''))
+  if (htmlRows.length) return { rows: htmlRows, format: 'Word / HTML' }
+  if (source.includes('\t')) return { rows: parseDelimitedTable(source, '\t'), format: 'TSV' }
+  const csvRows = parseDelimitedTable(source, ',')
+  if (csvRows.length && csvRows.some((row) => row.length > 1)) return { rows: csvRows, format: 'CSV' }
+  return { rows: [], format: null }
+}
+
+function markdownTableFromRows(rows: string[][]): string {
   const columnCount = Math.max(0, ...rows.map((row) => row.length))
-  if (rows.length < 2 || columnCount < 2) return
-  const cleanCell = (cell = '') => cell
-    .trim()
-    .replace(/<\/?strong>/gi, '**')
-    .replace(/<br\s*\/?\s*>/gi, ' · ')
-    .replace(/\|/g, '\\|')
+  if (!rows.length || columnCount < 2) return ''
+  const cleanCell = (cell = '') => cell.trim().replace(/\|/g, '\\|').replace(/\r?\n/g, ' · ')
   const normalized = rows.map((row) => Array.from({ length: columnCount }, (_, index) => cleanCell(row[index])))
-  const markdownTable = [
+  return [
     `| ${normalized[0].join(' | ')} |`,
     `| ${Array.from({ length: columnCount }, () => '---').join(' | ')} |`,
     ...normalized.slice(1).map((row) => `| ${row.join(' | ')} |`),
   ].join('\n')
-  view.dispatch({ changes: { from, to, insert: markdownTable }, selection: { anchor: from, head: from + markdownTable.length } })
-  view.focus()
 }
 
 const tools: Tool[] = [
@@ -265,17 +429,20 @@ const tools: Tool[] = [
   { label: 'Add strikethrough text', icon: Strikethrough, action: (view) => replaceSelection(view, '~~', '~~', 'strikethrough text') },
   { label: 'Add quote', icon: Quote, action: (view) => prefixLines(view, '> ') },
   { label: 'Add code', icon: Code2, action: (view) => replaceSelection(view, '`', '`', 'code') },
+  { label: 'Add Mermaid diagram', icon: GitBranch, action: (view) => insertBlock(view, '```mermaid\ngraph TD\n  A[Start] --> B[Result]\n```') },
+  { label: 'Add code group', icon: PanelsTopLeft, action: (view) => insertBlock(view, '::code-group\n\n```sh [npm]\nnpm install package\n```\n\n```sh [pnpm]\npnpm add package\n```\n\n::') },
   { label: 'Add link', icon: Link, action: (view) => insertLink(view) },
   { label: 'Add image', icon: Image, action: (view) => insertLink(view, true) },
   { label: 'Add bulleted list', icon: List, action: (view) => prefixLines(view, '- ') },
   { label: 'Add numbered list', icon: ListOrdered, action: (view) => prefixLines(view, '1. ') },
   { label: 'Add task list', icon: ListChecks, action: (view) => prefixLines(view, '- [ ] ') },
+  { label: 'Arrange selection in semantic columns', icon: Columns2, action: insertColumns },
   { label: 'Add table', icon: Table2, action: (view) => insertBlock(view, '| Column 1 | Column 2 |\n| --- | --- |\n| Cell | Cell |') },
-  { label: 'Convert pasted tabular text to a Markdown table', icon: Sheet, action: convertPastedTable },
   { label: 'Add horizontal rule', icon: Minus, action: (view) => insertBlock(view, '---') },
 ]
 
-export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onReset, documentId }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onReset, documentId, saveStatus }: MarkdownEditorProps) {
+  const editorVisible = mode !== 'preview'
   const hostRef = useRef<HTMLDivElement>(null)
   const documentRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
@@ -286,12 +453,121 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   const [status, setStatus] = useState<EditorStatus>({ line: 1, column: 1, selectedCharacters: 0, selectedLines: 0 })
   const [imageUploads, setImageUploads] = useState<ImageUploadState[]>([])
   const [showOpenEvidenceImport, setShowOpenEvidenceImport] = useState(false)
+  const [tableImport, setTableImport] = useState<{ source: string; html: string; from: number; to: number } | null>(null)
+  const [citationImport, setCitationImport] = useState<CitationImportState | null>(null)
+  const [citationLookup, setCitationLookup] = useState<CitationLookupState>({ status: 'idle', citation: '', error: '' })
   const [selectionTool, setSelectionTool] = useState<SelectionToolState | null>(null)
   const [imageTool, setImageTool] = useState<ImageToolState | null>(null)
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState<string | null>(null)
+  const [showLineNumbers, setShowLineNumbers] = useState(() => localStorage.getItem('scenemd-editor-line-numbers') === 'true')
+  const [showOutline, setShowOutline] = useState(() => localStorage.getItem('scenemd-editor-outline') !== 'false')
+  const [outlineWidth, setOutlineWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('scenemd-editor-outline-width'))
+    return Number.isFinite(saved) && saved >= 150 && saved <= 420 ? saved : 190
+  })
   onChangeRef.current = onChange
   valueRef.current = value
+
+  useEffect(() => {
+    localStorage.setItem('scenemd-editor-line-numbers', String(showLineNumbers))
+  }, [showLineNumbers])
+
+  useEffect(() => {
+    localStorage.setItem('scenemd-editor-outline', String(showOutline))
+  }, [showOutline])
+
+  useLayoutEffect(() => {
+    const view = viewRef.current
+    if (!view || !editorVisible) return
+    const scrollTop = view.scrollDOM.scrollTop
+    view.requestMeasure()
+    const frame = window.requestAnimationFrame(() => {
+      view.requestMeasure()
+      view.scrollDOM.scrollTop = scrollTop
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [showOutline, outlineWidth, mode, editorVisible])
+
+  const beginOutlineResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = outlineWidth
+    document.body.classList.add('is-resizing-outline')
+    const onMove = (moveEvent: PointerEvent) => setOutlineWidth(Math.min(420, Math.max(150, startWidth + moveEvent.clientX - startX)))
+    const onEnd = (endEvent: PointerEvent) => {
+      const width = Math.min(420, Math.max(150, startWidth + endEvent.clientX - startX))
+      setOutlineWidth(width)
+      localStorage.setItem('scenemd-editor-outline-width', String(Math.round(width)))
+      document.body.classList.remove('is-resizing-outline')
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onEnd)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onEnd, { once: true })
+  }
+
+  useEffect(() => {
+    if (!tableImport) return
+    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && setTableImport(null)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [tableImport])
+
+  useEffect(() => {
+    if (!citationImport) return
+    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && setCitationImport(null)
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [citationImport])
+
+  useEffect(() => {
+    if (!citationImport) return
+    const normalized = normalizeCitationIdentifier(citationImport.identifier)
+    if (!citationImport.identifier.trim()) {
+      setCitationLookup({ status: 'idle', citation: '', error: '' })
+      return
+    }
+    if (!normalized) {
+      setCitationLookup({ status: 'error', citation: '', error: 'Paste a DOI or PubMed ID, for example 10.1016/j.chest.2024.09.016 or PMID: 28012456' })
+      return
+    }
+    const existingNumber = existingCitationReferenceNumber(valueRef.current, normalized)
+    if (existingNumber !== null) {
+      setCitationLookup({ status: 'ready', citation: '', error: '', existingNumber, identifier: normalized })
+      return
+    }
+    const controller = new AbortController()
+    const timer = window.setTimeout(() => {
+      setCitationLookup({ status: 'loading', citation: '', error: '' })
+      const endpoint = new URL('/api/citations', window.location.origin)
+      endpoint.searchParams.set(normalized.type, normalized.value)
+      endpoint.searchParams.set('format', 'ama')
+      endpoint.searchParams.set('v', '2')
+      void fetch(endpoint, { signal: controller.signal })
+        .then(async (response) => {
+          const result = await response.json() as { citation?: string; doi?: string | null; pmid?: string; error?: string }
+          if (!response.ok || !result.citation) throw new Error(result.error || 'Citation lookup failed')
+          const resolved = normalizeCitationIdentifier(result.doi ? result.doi : result.pmid ? `PMID: ${result.pmid}` : normalized.value) ?? normalized
+          const resolvedExisting = existingCitationReferenceNumber(valueRef.current, resolved)
+          setCitationLookup({
+            status: 'ready',
+            citation: result.citation,
+            error: '',
+            existingNumber: resolvedExisting ?? undefined,
+            identifier: resolved,
+          })
+        })
+        .catch((error) => {
+          if (controller.signal.aborted) return
+          setCitationLookup({ status: 'error', citation: '', error: error instanceof Error ? error.message : 'Citation lookup failed' })
+        })
+    }, 320)
+    return () => {
+      window.clearTimeout(timer)
+      controller.abort()
+    }
+  }, [citationImport?.identifier])
 
   const dismissUpload = (id: string) => setImageUploads((uploads) => uploads.filter((upload) => upload.id !== id))
 
@@ -335,11 +611,88 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     lines: value.split('\n').length,
     characters: value.length,
   }), [value])
+  const outline = useMemo(() => documentOutline(value), [value])
+  const detectedTable = useMemo(() => detectPastedTable(tableImport?.source ?? '', tableImport?.html ?? ''), [tableImport?.source, tableImport?.html])
+
+  const openTableImport = () => {
+    const view = viewRef.current
+    if (!view) return
+    const { from, to } = view.state.selection.main
+    setTableImport({ source: view.state.sliceDoc(from, to), html: '', from, to })
+  }
+
+  const openCitationImport = () => {
+    const view = viewRef.current
+    if (!view) return
+    const selection = view.state.selection.main
+    const selected = view.state.sliceDoc(selection.from, selection.to).trim()
+    const selectedIdentifier = normalizeCitationIdentifier(selected)
+    setCitationImport({
+      identifier: selectedIdentifier ? selected : '',
+      from: selectedIdentifier ? selection.from : selection.head,
+      to: selectedIdentifier ? selection.to : selection.head,
+    })
+  }
+
+  const insertCitation = () => {
+    const view = viewRef.current
+    const normalized = citationLookup.identifier ?? normalizeCitationIdentifier(citationImport?.identifier ?? '')
+    if (!view || !citationImport || !normalized || citationLookup.status !== 'ready') return
+    const result = insertCitationReference(
+      view.state.doc.toString(),
+      citationImport.from,
+      citationImport.to,
+      normalized,
+      citationLookup.citation,
+    )
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: result.markdown },
+      selection: { anchor: result.cursor },
+      effects: EditorView.scrollIntoView(result.cursor, { y: 'center' }),
+    })
+    setCitationImport(null)
+    view.focus()
+  }
+
+  const insertImportedTable = () => {
+    const view = viewRef.current
+    if (!view || !tableImport) return
+    const markdownTable = markdownTableFromRows(detectedTable.rows)
+    if (!markdownTable) return
+    const prefix = tableImport.from > 0 && view.state.sliceDoc(tableImport.from - 1, tableImport.from) !== '\n' ? '\n\n' : ''
+    const suffix = tableImport.to < view.state.doc.length && view.state.sliceDoc(tableImport.to, tableImport.to + 1) !== '\n' ? '\n\n' : '\n'
+    const insert = `${prefix}${markdownTable}${suffix}`
+    view.dispatch({ changes: { from: tableImport.from, to: tableImport.to, insert }, selection: { anchor: tableImport.from + insert.length } })
+    setTableImport(null)
+    view.focus()
+  }
+
+  const navigateToOutlineItem = (item: OutlineItem) => {
+    if (mode === 'preview') {
+      const heading = documentRef.current?.querySelectorAll<HTMLElement>('h1, h2, h3')[item.previewIndex]
+      if (heading && documentRef.current) {
+        documentRef.current.scrollTo({
+          top: Math.max(0, heading.offsetTop - 34),
+          behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        })
+      }
+      return
+    }
+    const view = viewRef.current
+    if (!view) return
+    const offset = Math.min(item.offset, view.state.doc.length)
+    view.dispatch({
+      selection: { anchor: offset },
+      effects: EditorView.scrollIntoView(offset, { y: 'start', yMargin: 72 }),
+    })
+    view.focus()
+  }
 
   const insertImportedMarkdown = (content: string) => {
+    content = normalizeMarkdownUrls(content)
     const view = viewRef.current
     if (!view) {
-      onChangeRef.current(`${valueRef.current}${valueRef.current.endsWith('\n') ? '\n' : '\n\n'}${content}\n`)
+      onChangeRef.current(aggregateMarkdownReferences(`${valueRef.current}${valueRef.current.endsWith('\n') ? '\n' : '\n\n'}${content}\n`))
       return
     }
     const { from, to } = view.state.selection.main
@@ -348,7 +701,12 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const prefix = !before ? '' : before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n'
     const suffix = !after ? '\n' : after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n'
     const insert = `${prefix}${content}${suffix}`
-    view.dispatch({ changes: { from, to, insert }, selection: { anchor: from + insert.length - suffix.length } })
+    const combined = `${before}${insert}${after}`
+    const aggregated = aggregateMarkdownReferences(combined)
+    const insertedHeading = content.match(/^##\s+.+$/m)?.[0]
+    const insertedStart = insertedHeading ? aggregated.indexOf(insertedHeading) : Math.min(from, aggregated.length)
+    const cursor = insertedStart >= 0 ? Math.min(aggregated.length, insertedStart + content.length) : Math.min(from + insert.length, aggregated.length)
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: aggregated }, selection: { anchor: cursor } })
     view.focus()
   }
 
@@ -381,11 +739,23 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     }
   }
 
+  const makeSelectionColumns = () => {
+    const selected = selectionTool
+    const view = viewRef.current
+    if (!selected || !view) return
+    const current = view.state.sliceDoc(selected.from, selected.to)
+    if (current !== selected.text) return
+    const insert = columnsMarkdown(current)
+    view.dispatch({ changes: { from: selected.from, to: selected.to, insert }, selection: { anchor: selected.from + insert.length } })
+    view.focus()
+    setSelectionTool(null)
+  }
+
   const updateImageSyntax = (patch: Partial<MarpitImageOptions> & { url?: string }) => {
     const current = imageTool
     const view = viewRef.current
     if (!current || !view) return
-    const nextOptions = { ...current.options, ...patch }
+    const nextOptions = { ...current.options, ...patch, height: '', fit: 'contain' as const }
     const nextUrl = patch.url ?? current.url
     const syntax = `![${formatMarpitImageAlt(nextOptions)}](${nextUrl})`
     view.dispatch({
@@ -396,7 +766,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   }
 
   useEffect(() => {
-    if (!hostRef.current || mode === 'preview') return
+    if (!hostRef.current || !editorVisible) return
 
     const synchronizeContextTools = (editor: EditorView) => {
       const selection = editor.state.selection.main
@@ -454,6 +824,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         markdown({ codeLanguages: languages }),
         syntaxHighlighting(markdownHighlightStyle),
         autocompletion({ override: [presentationHintCompletion], activateOnTyping: true }),
+        markdownImagePreviews,
         EditorView.lineWrapping,
         EditorView.domEventHandlers({
           paste(event, view) {
@@ -494,10 +865,12 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         EditorView.theme({
           '&': { height: '100%', backgroundColor: 'transparent', color: 'var(--ink)' },
           '.cm-scroller': { overflow: 'auto', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' },
-          '.cm-content': { minHeight: '100%', padding: '72px 20px 130px', fontSize: '20px', lineHeight: '32px', caretColor: 'var(--accent)' },
+          '.cm-content': { minHeight: '100%', padding: '28px 20px 130px', fontSize: '20px', lineHeight: '32px', caretColor: 'var(--accent)' },
           '.cm-line': { padding: '0' },
-          '.cm-gutters': { display: 'none' },
-          '.cm-activeLine': { backgroundColor: 'transparent' },
+          '.cm-gutters': { backgroundColor: 'transparent', color: 'var(--muted)', borderRight: '1px solid var(--line)' },
+          '.cm-lineNumbers .cm-gutterElement': { minWidth: '44px', padding: '0 10px 0 6px', fontSize: '12px', lineHeight: '32px' },
+          '.cm-activeLine': { backgroundColor: 'color-mix(in srgb, var(--accent) 6%, transparent)' },
+          '.cm-activeLineGutter': { color: 'var(--accent-ink)', backgroundColor: 'color-mix(in srgb, var(--accent) 8%, transparent)' },
           '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: 'color-mix(in srgb, var(--accent) 18%, transparent) !important' },
           '.cm-cursor': { borderLeftColor: 'var(--accent)' },
           '.cm-tooltip-autocomplete': { border: '1px solid var(--line)', borderRadius: '6px', backgroundColor: 'var(--surface-raised)' },
@@ -513,7 +886,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       view.destroy()
       viewRef.current = null
     }
-  }, [mode, theme])
+  }, [editorVisible, theme])
 
   useEffect(() => {
     const view = viewRef.current
@@ -554,15 +927,18 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     <div className="markdown-composer">
       <div className="markdown-editor-topbar">
         <div className="markdown-toolbar" role="toolbar" aria-label="Editor modes and Markdown formatting">
+          <button className={showOutline ? 'is-active' : ''} title={showOutline ? 'Hide document contents' : 'Show document contents'} aria-label="Toggle document contents" aria-pressed={showOutline} onClick={() => setShowOutline((visible) => !visible)}>{showOutline ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}</button>
           <button className={`markdown-mode-button ${mode === 'write' ? 'is-active' : ''}`} aria-pressed={mode === 'write'} onClick={() => onModeChange('write')}><Pencil size={14} /><span>Write</span></button>
           <button className={`markdown-mode-button ${mode === 'split' ? 'is-active' : ''}`} aria-pressed={mode === 'split'} onClick={() => onModeChange('split')} aria-label="Split editor and rendered Markdown"><Columns2 size={14} /><span>Split</span></button>
           <button className={`markdown-mode-button ${mode === 'preview' ? 'is-active' : ''}`} aria-pressed={mode === 'preview'} onClick={() => onModeChange('preview')} aria-label="Preview rendered Markdown"><Eye size={14} /><span>Preview</span></button>
-          {mode !== 'preview' && <span className="markdown-toolbar-divider" aria-hidden="true" />}
           {mode !== 'preview' && (
             <>
+            <button className={showLineNumbers ? 'is-active' : ''} title={showLineNumbers ? 'Hide line numbers' : 'Show line numbers'} aria-label="Toggle line numbers" aria-pressed={showLineNumbers} onClick={() => setShowLineNumbers((visible) => !visible)}><Hash size={16} /></button>
             {tools.map(({ label, icon: Icon, action }) => (
               <button key={label} title={label} aria-label={label} onMouseDown={(event) => event.preventDefault()} onClick={() => viewRef.current && action(viewRef.current)}><Icon size={16} /></button>
             ))}
+            <button title="Paste Word, CSV, or TSV table" aria-label="Convert pasted table to Markdown" onMouseDown={(event) => event.preventDefault()} onClick={openTableImport}><Sheet size={16} /></button>
+            <button title="Insert citation from DOI or PubMed ID" aria-label="Insert AMA citation from DOI or PubMed ID" onMouseDown={(event) => event.preventDefault()} onClick={openCitationImport}><BookPlus size={16} /></button>
             <button className="openevidence-tool" title="Import OpenEvidence conversation" aria-label="Import OpenEvidence conversation" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowOpenEvidenceImport(true)}><span aria-hidden="true">O</span></button>
             <button title="Upload image" aria-label="Upload image" onMouseDown={(event) => event.preventDefault()} onClick={() => fileInputRef.current?.click()}><Upload size={16} /></button>
             <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple onChange={(event) => {
@@ -573,34 +949,50 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           )}
         </div>
       </div>
-      <div className={`markdown-editor-body is-${mode}`}>
-        {mode !== 'preview' && <div className="codemirror-host" ref={hostRef} />}
-        {mode !== 'write' && (
-          <div className="markdown-document-scroll" ref={documentRef}><MarkdownDocumentView value={value} /></div>
-        )}
+      <div className={`markdown-editor-body${showOutline ? '' : ' is-outline-collapsed'}`} style={{ '--outline-width': `${outlineWidth}px` } as CSSProperties}>
+        <aside className="markdown-outline" aria-label="Document table of contents">
+          <header>
+            <span className="markdown-outline-title"><ListTree size={14} /><span>Contents</span></span>
+          </header>
+          {showOutline && (outline.length ? <nav>
+            {outline.map((item) => <button
+              key={`${item.offset}-${item.text}`}
+              className={`outline-level-${item.level}${status.line >= item.line && !outline.some((next) => next.line > item.line && next.line <= status.line) ? ' is-active' : ''}`}
+              onClick={() => navigateToOutlineItem(item)}
+              title={`Line ${item.line}: ${item.text}`}
+            ><span>{item.text}</span></button>)}
+          </nav> : <p>Add H1–H3 headings to build the document outline.</p>)}
+        </aside>
+        {showOutline && <button className="outline-resize-handle" onPointerDown={beginOutlineResize} aria-label="Resize document contents pane" title="Drag to resize Contents"><span /></button>}
+        <div className={`markdown-editor-content is-${mode}`}>
+          {mode !== 'preview' && <div className={`codemirror-host${showLineNumbers ? ' show-line-numbers' : ''}`} ref={hostRef} />}
+          {mode !== 'write' && (
+            <div className="markdown-document-scroll" ref={documentRef}><MarkdownDocumentView value={value} /></div>
+          )}
+        </div>
       </div>
       <div className="markdown-statusbar" aria-label="Editor status">
         <div><span>Ln {status.line}, Col {status.column}</span>{status.selectedCharacters > 0 && <span>{status.selectedCharacters} selected · {status.selectedLines} lines</span>}</div>
-        <div><span>{documentMetrics.lines} lines</span><span>{documentMetrics.words} words</span><span>{documentMetrics.characters} characters</span><span className="save-status">Saved locally</span><button onClick={onReset}><RotateCcw size={12} /> Reset</button></div>
+        <div><span>{documentMetrics.lines} lines</span><span>{documentMetrics.words} words</span><span>{documentMetrics.characters} characters</span><span className={`save-status is-${saveStatus}`} role="status" aria-live="polite">{saveStatus === 'saving' ? <><LoaderCircle className="is-spinning" size={12} /> Saving…</> : saveStatus === 'conflict' ? 'Save conflict' : saveStatus === 'offline' ? 'Offline — changes pending' : <><Check size={12} /> Saved to cloud</>}</span><button onClick={onReset}><RotateCcw size={12} /> Reset</button></div>
       </div>
       {selectionTool && <div className="selection-ai-tool" style={{ left: selectionTool.left, top: selectionTool.top }} onMouseDown={(event) => event.preventDefault()}>
         <button onClick={() => void makeSelectionBullets()} disabled={aiBusy || selectionTool.text.length > 12000} title={selectionTool.text.length > 12000 ? 'Select no more than 12,000 characters' : 'Rewrite selection as Markdown bullets with Workers AI'}>
           {aiBusy ? <LoaderCircle className="is-spinning" size={15} /> : <Sparkles size={15} />}
           {aiBusy ? 'Making bullets…' : 'Make bullets'}
         </button>
+        <button onClick={makeSelectionColumns} title="Arrange the selection as two responsive columns"><Columns2 size={15} />Two columns</button>
         <span>{selectionTool.text.length.toLocaleString()}</span>
         <button className="selection-tool-close" onClick={() => setSelectionTool(null)} aria-label="Close selection tool"><X size={14} /></button>
         {aiError && <small>{aiError}</small>}
       </div>}
       {imageTool && <aside className="image-syntax-popover" style={{ left: imageTool.left, top: imageTool.top }} onMouseDown={(event) => event.stopPropagation()} aria-label="Image options">
         <header><div><Image size={16} /><strong>Image</strong><span>Marpit syntax</span></div><button onClick={() => { setImageTool(null); viewRef.current?.focus() }} aria-label="Close image options"><X size={15} /></button></header>
-        <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: imageTool.options.fit === 'auto' ? 'none' : imageTool.options.fit, filter: imageFilterCss(imageTool.options.filters) }} /></div>
+        <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: 'contain', filter: imageFilterCss(imageTool.options.filters) }} /></div>
         <div className="image-syntax-fields">
           <label className="image-field-wide"><span>Image URL</span><input value={imageTool.url} onChange={(event) => updateImageSyntax({ url: event.target.value })} /></label>
           <label className="image-field-wide"><span>Alt text</span><input value={imageTool.options.alt} onChange={(event) => updateImageSyntax({ alt: event.target.value })} placeholder="Describe this image" /></label>
           <label><span>Width</span><input value={imageTool.options.width} onChange={(event) => updateImageSyntax({ width: event.target.value })} placeholder="e.g. 480px" /></label>
-          <label><span>Height</span><input value={imageTool.options.height} onChange={(event) => updateImageSyntax({ height: event.target.value })} placeholder="e.g. 300px" /></label>
-          <label><span>Fit</span><select value={imageTool.options.fit} onChange={(event) => updateImageSyntax({ fit: event.target.value as MarpitImageOptions['fit'] })}>{imageTool.options.background ? <><option value="cover">Cover</option><option value="contain">Contain</option><option value="auto">Original</option></> : <><option value="cover">Default</option><option value="auto">Original</option></>}</select></label>
+          <label><span>Scaling</span><input value="Proportional · contain" readOnly aria-label="Image scaling mode" /></label>
           <label><span>Background side</span><select value={imageTool.options.side} disabled={!imageTool.options.background} onChange={(event) => updateImageSyntax({ side: event.target.value as MarpitImageOptions['side'] })}><option value="none">Full</option><option value="left">Left</option><option value="right">Right</option></select></label>
           <label className="image-field-check"><input type="checkbox" checked={imageTool.options.background} onChange={(event) => updateImageSyntax({ background: event.target.checked })} /><span>Scene background</span></label>
           <label><span>Split size</span><input disabled={!imageTool.options.background || imageTool.options.side === 'none'} value={imageTool.options.splitSize} onChange={(event) => updateImageSyntax({ splitSize: event.target.value })} placeholder="50%" /></label>
@@ -615,6 +1007,39 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         </div>)}
       </div>}
       {showOpenEvidenceImport && <OpenEvidenceImportDialog onClose={() => setShowOpenEvidenceImport(false)} onInsert={insertImportedMarkdown} />}
+      {tableImport && createPortal(<div className="table-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setTableImport(null)}>
+        <section className="table-import-dialog" role="dialog" aria-modal="true" aria-labelledby="table-import-title">
+          <header><div><Sheet size={18} /><div><small>Smart paste</small><h2 id="table-import-title">Import table</h2></div></div><button onClick={() => setTableImport(null)} aria-label="Close table import"><X size={18} /></button></header>
+          <div className="table-import-body">
+            <label><span>Paste from Word, Excel, CSV, or TSV</span><textarea autoFocus value={tableImport.source} onChange={(event) => setTableImport((current) => current ? { ...current, source: event.target.value, html: '' } : current)} onPaste={(event) => {
+              const html = event.clipboardData.getData('text/html')
+              const plain = event.clipboardData.getData('text/plain')
+              if (!html && !plain) return
+              event.preventDefault()
+              setTableImport((current) => current ? { ...current, source: plain, html } : current)
+            }} placeholder={'Name,Value\nAlpha,42\nBeta,18'} /></label>
+            <div className="table-import-detection"><span className={detectedTable.format ? 'is-detected' : ''}>{detectedTable.format ? `${detectedTable.format} detected` : 'Waiting for tabular data'}</span>{detectedTable.rows.length > 0 && <small>{detectedTable.rows.length} rows · {Math.max(...detectedTable.rows.map((row) => row.length))} columns</small>}</div>
+            <div className="table-import-preview">{detectedTable.rows.length ? <table><tbody>{detectedTable.rows.slice(0, 8).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => rowIndex === 0 ? <th key={cellIndex}>{cell}</th> : <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table> : <div><Sheet size={22} /><span>Your table preview appears here.</span></div>}</div>
+          </div>
+          <footer><span>Format is detected automatically.</span><div><button onClick={() => setTableImport(null)}>Cancel</button><button className="table-import-primary" onClick={insertImportedTable} disabled={!markdownTableFromRows(detectedTable.rows)}>Insert Markdown table</button></div></footer>
+        </section>
+      </div>, document.body)}
+      {citationImport && createPortal(<div className="citation-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setCitationImport(null)}>
+        <section className="citation-import-dialog" role="dialog" aria-modal="true" aria-labelledby="citation-import-title">
+          <header><div><BookPlus size={18} /><div><small>AMA CSL</small><h2 id="citation-import-title">Insert citation</h2></div></div><button onClick={() => setCitationImport(null)} aria-label="Close citation import"><X size={18} /></button></header>
+          <div className="citation-import-body">
+            <label><span>DOI or PubMed ID</span><input autoFocus value={citationImport.identifier} onChange={(event) => setCitationImport((current) => current ? { ...current, identifier: event.target.value } : current)} placeholder="10.1016/j.chest.2024.09.016 or PMID: 28012456" /></label>
+            <div className={`citation-lookup-status is-${citationLookup.status}`}>
+              {citationLookup.status === 'idle' && <span>Paste a DOI, PMID, or PubMed article URL.</span>}
+              {citationLookup.status === 'loading' && <span><LoaderCircle className="is-spinning" size={14} /> Formatting with AMA CSL…</span>}
+              {citationLookup.status === 'error' && <span>{citationLookup.error}</span>}
+              {citationLookup.status === 'ready' && citationLookup.existingNumber !== undefined && <span><Check size={14} /> Already listed as [{citationLookup.existingNumber}]. The existing reference will be reused.</span>}
+              {citationLookup.status === 'ready' && citationLookup.existingNumber === undefined && <blockquote>{citationLookup.citation.replace(/^\s*\d+\.\s*/, '')}</blockquote>}
+            </div>
+          </div>
+          <footer><span>New references are appended without renumbering existing citations.</span><div><button onClick={() => setCitationImport(null)}>Cancel</button><button className="citation-import-primary" onClick={insertCitation} disabled={citationLookup.status !== 'ready'}>Insert [{citationLookup.existingNumber ?? 'n'}]</button></div></footer>
+        </section>
+      </div>, document.body)}
     </div>
   )
 }

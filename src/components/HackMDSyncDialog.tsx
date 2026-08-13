@@ -22,13 +22,19 @@ interface HackMDResult {
   conflict?: boolean
 }
 
-export function HackMDSyncDialog({ documentId, onDocument, onClose }: { documentId: string; onDocument: (document: SyncedDocument) => void; onClose: () => void }) {
+export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose }: { documentId: string; onDocument: (document: SyncedDocument) => void; onBusyChange?: (busy: boolean) => void; onClose: () => void }) {
   const [noteId, setNoteId] = useState('')
   const [connected, setConnected] = useState(false)
   const [accountName, setAccountName] = useState('HackMD')
   const [busy, setBusy] = useState<'sync' | 'pull' | 'push' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    onBusyChange?.(Boolean(busy))
+  }, [busy, onBusyChange])
+
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -88,7 +94,7 @@ export function HackMDSyncDialog({ documentId, onDocument, onClose }: { document
         <div>
           {!!noteId.trim() && <button onClick={() => void synchronize('pull')} disabled={Boolean(busy)}>{busy === 'pull' ? <LoaderCircle className="is-spinning" size={15} /> : <ArrowDownToLine size={15} />} Pull</button>}
           {!!noteId.trim() && <button onClick={() => void synchronize('push')} disabled={Boolean(busy)}>{busy === 'push' ? <LoaderCircle className="is-spinning" size={15} /> : <ArrowUpFromLine size={15} />} Push</button>}
-          <button className="hackmd-primary" onClick={() => void synchronize('sync')} disabled={Boolean(busy)}>{busy === 'sync' ? <LoaderCircle className="is-spinning" size={15} /> : <RefreshCw size={15} />} {noteId.trim() ? 'Smart sync' : 'Create & sync'}</button>
+          <button className="hackmd-primary" onClick={() => void synchronize('sync')} disabled={Boolean(busy)} aria-busy={busy === 'sync'}><RefreshCw className={`sync-rotation-icon${busy === 'sync' ? ' is-spinning' : ''}`} size={15} /> {noteId.trim() ? 'Smart sync' : 'Create & sync'}</button>
         </div>
       </footer>
     </section>

@@ -7,6 +7,7 @@ interface Env {
 }
 
 interface PresentationConfig {
+  theme: 'default' | 'editorial' | 'catppuccin'
   title: string
   subtitle: string
   seriesName: string
@@ -57,7 +58,9 @@ const json = (data: unknown, status = 200) => Response.json(data, {
 function normalizePresentationConfig(value: unknown, title: string): PresentationConfig {
   const source = value && typeof value === 'object' ? value as Record<string, unknown> : {}
   const text = (key: keyof PresentationConfig, fallback = '') => typeof source[key] === 'string' ? source[key].slice(0, 300) : fallback
+  const theme = source.theme === 'editorial' || source.theme === 'catppuccin' ? source.theme : 'default'
   return {
+    theme,
     title: text('title', title).trim() || title,
     subtitle: text('subtitle'),
     seriesName: text('seriesName', 'SceneMD'),

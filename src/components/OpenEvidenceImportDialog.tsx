@@ -3,6 +3,7 @@ import { Check, ExternalLink, LoaderCircle, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import {
   isOpenEvidenceConversationUrl,
+  openEvidenceConversationMarkdown,
   parseOpenEvidenceConversation,
   type OpenEvidenceConversation,
 } from '../lib/openevidence'
@@ -18,6 +19,7 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
   const [conversation, setConversation] = useState<OpenEvidenceConversation | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(false)
+  const [inserting, setInserting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -63,14 +65,18 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
     })
   }
 
-  const insertSelected = () => {
+  const insertSelected = async () => {
     if (!conversation || !selected.size) return
-    const markdown = conversation.turns
-      .filter((_, index) => selected.has(index))
-      .map((turn) => `## ${turn.question}\n\n${turn.answerMarkdown}`)
-      .join('\n\n---\n\n')
-    onInsert(markdown)
-    onClose()
+    setInserting(true)
+    setError(null)
+    try {
+      const markdown = await openEvidenceConversationMarkdown(conversation, selected)
+      onInsert(markdown)
+      onClose()
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not normalize citations.')
+      setInserting(false)
+    }
   }
 
   return createPortal(
@@ -111,7 +117,7 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
         </div>
         <footer>
           <span>{conversation ? `${selected.size} selected` : 'Only public links can be read'}</span>
-          <button className="oe-insert-button" disabled={!conversation || !selected.size} onClick={insertSelected}>Insert into document</button>
+          <button className="oe-insert-button" disabled={!conversation || !selected.size || inserting} onClick={() => void insertSelected()}>{inserting ? <><LoaderCircle className="is-spinning" size={15} /> Formatting AMA…</> : 'Insert into document'}</button>
         </footer>
       </section>
     </div>,

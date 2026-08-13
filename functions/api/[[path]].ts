@@ -57,6 +57,97 @@ function presentationConfig(value: unknown, title: string): PresentationConfig {
   }
 }
 
+function normalizeDoi(value: string): string | null {
+  let candidate = value.trim()
+    .replace(/^doi\s*:\s*/i, '')
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, '')
+  try {
+    candidate = decodeURIComponent(candidate)
+  } catch {
+    // Preserve malformed percent sequences so they fail validation below.
+  }
+  const match = candidate.match(/^10\.\d{4,9}\/[\w.()/:;+-]+$/i)
+  return match ? match[0].toLowerCase() : null
+}
+
+function normalizePmid(value: string): string | null {
+  let candidate = value.trim()
+  const pubmedUrl = candidate.match(/^https?:\/\/(?:www\.)?pubmed\.ncbi\.nlm\.nih\.gov\/(\d{1,10})\/?(?:[?#].*)?$/i)
+    ?? candidate.match(/^https?:\/\/www\.ncbi\.nlm\.nih\.gov\/pubmed\/(\d{1,10})\/?(?:[?#].*)?$/i)
+  if (pubmedUrl) return pubmedUrl[1]
+  candidate = candidate.replace(/^PMID\s*:\s*/i, '').trim()
+  return /^\d{1,10}$/.test(candidate) ? candidate : null
+}
+
+function doiUrl(doi: string): string {
+  return `https://doi.org/${doi.split('/').map(encodeURIComponent).join('/')}`
+}
+
+async function formattedDoi(context: EventContext<Env, string, unknown>, doi: string, format: 'ama' | 'bibtex'): Promise<Response> {
+  const cacheKey = new Request(`https://citation-cache.scenemd.local/v2/${format}/${encodeURIComponent(doi)}`)
+  const cache = (caches as CacheStorage & { default: Cache }).default
+  const cached = await cache.match(cacheKey)
+  if (cached) return cached
+  const accept = format === 'ama'
+    ? 'text/x-bibliography; style=american-medical-association; locale=en-US'
+    : 'application/x-bibtex'
+  try {
+    const response = await fetch(doiUrl(doi), {
+      headers: {
+        Accept: accept,
+        'User-Agent': 'SceneMD/0.1 (https://scenemd.pages.dev; mailto:hsieh.ting.lin@gmail.com)',
+      },
+      redirect: 'follow',
+    })
+    if (!response.ok) return json({ error: response.status === 404 ? 'DOI not found' : `DOI service returned ${response.status}` }, response.status === 404 ? 404 : 502)
+    const formatted = (await response.text()).trim().replace(/\.\s*,\s*ed\.\s*/gi, '. ')
+    if (!formatted || formatted.length > 100_000) return json({ error: 'DOI service returned invalid metadata' }, 502)
+    const payload = Response.json(format === 'ama' ? { doi, citation: formatted } : { doi, bibtex: formatted }, {
+      headers: { 'Cache-Control': 'public, max-age=604800' },
+    })
+    context.waitUntil(cache.put(cacheKey, payload.clone()))
+    return payload
+  } catch {
+    return json({ error: 'Could not reach the DOI metadata service' }, 502)
+  }
+}
+
+async function formattedPmid(context: EventContext<Env, string, unknown>, pmid: string): Promise<Response> {
+  const cacheKey = new Request(`https://citation-cache.scenemd.local/ama/pmid/${pmid}`)
+  const cache = (caches as CacheStorage & { default: Cache }).default
+  const cached = await cache.match(cacheKey)
+  if (cached) return cached
+  try {
+    // NLM's official Literature Citation Exporter returns PubMed records in AMA.
+    // https://pmc.ncbi.nlm.nih.gov/api/ctxp/
+    const endpoint = new URL('https://pmc.ncbi.nlm.nih.gov/api/ctxp/v1/pubmed/')
+    endpoint.searchParams.set('format', 'citation')
+    endpoint.searchParams.set('id', pmid)
+    const response = await fetch(endpoint, {
+      headers: { 'User-Agent': 'SceneMD/0.1 (https://scenemd.pages.dev; mailto:hsieh.ting.lin@gmail.com)' },
+    })
+    if (!response.ok) return json({ error: `PubMed service returned ${response.status}` }, 502)
+    const record = await response.json<{
+      id?: string
+      ama?: { orig?: string }
+    } | null>()
+    const citation = record?.ama?.orig?.replace(/\s+/g, ' ').trim() ?? ''
+    if (record?.id?.toLowerCase() !== `pmid:${pmid}` || !citation || citation.length > 100_000) {
+      return json({ error: 'PubMed ID not found' }, 404)
+    }
+    const doiMatch = citation.match(/10\.\d{4,9}\/[\w.()/:;+-]+/i)?.[0]
+    const doi = doiMatch ? normalizeDoi(doiMatch.replace(/[.,;:]+$/, '')) : null
+    const formatted = doi || /PMID\s*:/i.test(citation) ? citation : `${citation.replace(/[.\s]+$/, '')}. PMID: ${pmid}.`
+    const payload = Response.json({ pmid, doi, citation: formatted }, {
+      headers: { 'Cache-Control': 'public, max-age=604800' },
+    })
+    context.waitUntil(cache.put(cacheKey, payload.clone()))
+    return payload
+  } catch {
+    return json({ error: 'Could not reach PubMed' }, 502)
+  }
+}
+
 export const onRequest: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url)
   const segments = url.pathname.replace(/^\/api\/?/, '').split('/').filter(Boolean).map(decodeURIComponent)
@@ -104,6 +195,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: selectedText }),
     }))
+  }
+
+  if (resource === 'citations' && context.request.method === 'GET') {
+    const doi = normalizeDoi(url.searchParams.get('doi') ?? '')
+    const pmid = normalizePmid(url.searchParams.get('pmid') ?? '')
+    const format = url.searchParams.get('format') === 'bibtex' ? 'bibtex' : 'ama'
+    if (doi) return formattedDoi(context, doi, format)
+    if (pmid && format === 'ama') return formattedPmid(context, pmid)
+    if (pmid) return json({ error: 'PubMed BibTeX export requires a DOI' }, 400)
+    return json({ error: 'Enter a valid DOI or PubMed ID' }, 400)
   }
 
   if (resource === 'uploads' && id === 'images' && context.request.method === 'POST') {

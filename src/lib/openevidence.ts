@@ -8,6 +8,12 @@ export interface OpenEvidenceConversation {
   turns: OpenEvidenceTurn[]
 }
 
+interface ReferenceSection {
+  start: number
+  end: number
+  entries: Array<{ number: number; text: string }>
+}
+
 const CHROME_SELECTOR = [
   'button',
   'svg',
@@ -73,6 +79,170 @@ export function parseOpenEvidenceConversation(html: string): OpenEvidenceConvers
   return { title, turns }
 }
 
+export async function openEvidenceConversationMarkdown(conversation: OpenEvidenceConversation, selected: Set<number>): Promise<string> {
+  const markdown = normalizeMarkdownUrls(conversation.turns
+    .filter((_, index) => selected.has(index))
+    .map((turn) => `## ${turn.question}\n\n${turn.answerMarkdown}`)
+    .join('\n\n'))
+  return normalizeMarkdownUrls(await enrichMarkdownReferences(aggregateMarkdownReferences(markdown)))
+}
+
+export function normalizeMarkdownUrls(markdown: string): string {
+  return markdown.replace(/\]\((https?:\/\/[^)]*)\)/gi, (_match, url: string) => `](${url.replace(/\s+/g, '')})`)
+}
+
+function cleanDoiMatch(value: string): string {
+  let doi = value.replace(/[.,;:]+$/, '')
+  while (doi.endsWith(')') && (doi.match(/\(/g)?.length ?? 0) < (doi.match(/\)/g)?.length ?? 0)) doi = doi.slice(0, -1)
+  return doi
+}
+
+/**
+ * OpenEvidence restarts citation numbers for every answer. Normalize every
+ * body/reference pair into one document-level bibliography, deduplicating by
+ * DOI, PMID, canonical URL, and finally normalized title.
+ */
+export function aggregateMarkdownReferences(markdown: string): string {
+  markdown = normalizeMarkdownUrls(markdown)
+  const sections = referenceSections(markdown)
+  if (!sections.length) return markdown
+
+  const references: string[] = []
+  const referenceNumbers = new Map<string, number>()
+  let cursor = 0
+  let body = ''
+
+  sections.forEach((section) => {
+    const localToGlobal = new Map<number, number>()
+    section.entries.forEach((entry) => {
+      const key = referenceKey(entry.text)
+      let globalNumber = referenceNumbers.get(key)
+      if (!globalNumber) {
+        globalNumber = references.length + 1
+        referenceNumbers.set(key, globalNumber)
+        references.push(entry.text.trim())
+      }
+      localToGlobal.set(entry.number, globalNumber)
+    })
+    body += remapCitationMarkers(markdown.slice(cursor, section.start), localToGlobal)
+    cursor = section.end
+  })
+
+  body += markdown.slice(cursor)
+  const cleanBody = body.replace(/\n{3,}/g, '\n\n').trim()
+  if (!references.length) return cleanBody
+  return `${cleanBody}\n\n### References\n\n${references.map((reference, index) => `${index + 1}. ${reference}`).join('\n')}\n`
+}
+
+function referenceSections(markdown: string): ReferenceSection[] {
+  const headings = [...markdown.matchAll(/^###\s+References\s*$/gim)]
+  return headings.flatMap((heading): ReferenceSection[] => {
+    if (heading.index === undefined) return []
+    const bodyStart = heading.index + heading[0].length
+    const tail = markdown.slice(bodyStart)
+    const boundary = /^(?:---\s*$|#{1,3}\s+\S.*$)/m.exec(tail)
+    const end = boundary?.index === undefined ? markdown.length : bodyStart + boundary.index
+    const referenceBody = markdown.slice(bodyStart, end)
+    const starts = [...referenceBody.matchAll(/^\s*(\d+)\.\s+/gm)]
+    const entries = starts.map((entry, index) => ({
+      number: Number(entry[1]),
+      text: referenceBody.slice((entry.index ?? 0) + entry[0].length, starts[index + 1]?.index ?? referenceBody.length).replace(/\s+/g, ' ').trim(),
+    }))
+    return entries.length ? [{ start: heading.index, end, entries }] : []
+  })
+}
+
+function canonicalUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    for (const key of [...url.searchParams.keys()]) if (/^utm_/i.test(key)) url.searchParams.delete(key)
+    url.pathname = url.pathname.replace(/\/$/, '')
+    return url.toString().toLowerCase()
+  } catch {
+    return value.toLowerCase()
+  }
+}
+
+function referenceKey(reference: string): string {
+  const doiMatch = reference.match(/10\.\d{4,9}\/[\w.()/:;+-]+/i)?.[0]
+  const doi = doiMatch ? cleanDoiMatch(doiMatch).toLowerCase() : null
+  if (doi) return `doi:${doi}`
+  const url = reference.match(/https?:\/\/[^)\s]+/i)?.[0]
+  const pmid = url?.match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i)?.[1] ?? reference.match(/PMID\s*:\s*(\d+)/i)?.[1]
+  if (pmid) return `pmid:${pmid}`
+  if (url) return `url:${canonicalUrl(url)}`
+  const title = reference.match(/^\[([^\]]+)]/)?.[1] ?? reference.split(/\.\s/)[0]
+  return `title:${normalize(title).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')}`
+}
+
+function citationNumbers(value: string): number[] {
+  const numbers: number[] = []
+  value.split(',').forEach((part) => {
+    const range = part.trim().match(/^(\d+)\s*[-–]\s*(\d+)$/)
+    if (range) {
+      const start = Number(range[1])
+      const end = Number(range[2])
+      for (let number = Math.min(start, end); number <= Math.max(start, end); number += 1) numbers.push(number)
+    } else if (/^\d+$/.test(part.trim())) numbers.push(Number(part.trim()))
+  })
+  return numbers
+}
+
+function mappedMarkers(value: string, mapping: Map<number, number>): string {
+  const mapped = citationNumbers(value).map((number) => mapping.get(number)).filter((number): number is number => Boolean(number))
+  return [...new Set(mapped)].map((number) => `[${number}]`).join('')
+}
+
+function remapCitationMarkers(body: string, mapping: Map<number, number>): string {
+  const linked = body.replace(/\[((?:\\.|[^\]])*)]\(([^)\n]+)\)/g, (match, label: string) => {
+    const groups = [...label.matchAll(/\\?\[([\d,\s\-–]+)\\?\]/g)]
+    if (!groups.length) return match
+    const markers = groups.map((group) => mappedMarkers(group[1], mapping)).join('')
+    return markers || match
+  })
+  return linked.replace(/\\?\[([\d,\s\-–]+)\\?\]/g, (match, numbers: string) => mappedMarkers(numbers, mapping) || match)
+}
+
+function citationIdentifier(reference: string): { type: 'doi' | 'pmid'; value: string } | null {
+  const pmid = reference.match(/pubmed\.ncbi\.nlm\.nih\.gov\/(\d+)/i)?.[1] ?? reference.match(/PMID\s*:\s*(\d+)/i)?.[1]
+  if (pmid) return { type: 'pmid', value: pmid }
+  const doiMatch = reference.match(/10\.\d{4,9}\/[\w.()/:;+-]+/i)?.[0]
+  const doi = doiMatch ? cleanDoiMatch(doiMatch) : null
+  return doi ? { type: 'doi', value: doi } : null
+}
+
+/** Resolve DOI/PubMed-backed entries through SceneMD's server citation
+ * endpoint so OpenEvidence imports use the same AMA formatter as the editor. */
+export async function enrichMarkdownReferences(markdown: string): Promise<string> {
+  const section = referenceSections(markdown)[0]
+  if (!section) return markdown
+  const enriched: string[] = []
+  for (const entry of section.entries) {
+    const identifier = citationIdentifier(entry.text)
+    if (!identifier) {
+      enriched.push(entry.text)
+      continue
+    }
+    try {
+      const endpoint = `/api/citations?${identifier.type}=${encodeURIComponent(identifier.value)}&format=ama&v=2`
+      let response = await fetch(endpoint)
+      if (response.status === 429 || response.status >= 500) {
+        await new Promise((resolve) => window.setTimeout(resolve, 240))
+        response = await fetch(endpoint)
+      }
+      const result = await response.json() as { citation?: string }
+      enriched.push(response.ok && result.citation
+        ? result.citation.replace(/^\s*\d+\.\s*/, '').replace(/\.\s*,\s*ed\.\s*/gi, '. ').trim()
+        : entry.text)
+    } catch {
+      enriched.push(entry.text)
+    }
+  }
+  const bibliography = `### References\n\n${enriched.map((reference, index) => `${index + 1}. ${reference}`).join('\n')}\n`
+  return `${markdown.slice(0, section.start).trimEnd()}\n\n${bibliography}${markdown.slice(section.end).trimStart()}`.trimEnd() + '\n'
+}
+
 function questionForArticle(article: Element, queryBars: Element[]): string {
   let nearest: Element | null = null
   for (const bar of queryBars) {
@@ -123,11 +293,18 @@ function referencesToMarkdown(references: Element): string {
     const subtitle = subtitleElement
       ? [...subtitleElement.children].map((child) => normalize(child.textContent ?? '')).filter(Boolean).join(' ')
       : ''
-    const href = anchor?.getAttribute('href') ?? ''
+    const href = cleanExtractedUrl(anchor?.getAttribute('href') ?? '')
     const label = href && title ? `[${escapeMarkdownText(title)}](${href})` : escapeMarkdownText(title)
     return `${index + 1}. ${[label, escapeMarkdownText(subtitle)].filter(Boolean).join(' ')}`.trim()
   }).filter((line) => !/^\d+\.\s*$/.test(line))
   return lines.length ? `### References\n\n${lines.join('\n')}` : ''
+}
+
+function cleanExtractedUrl(value: string): string {
+  // OpenEvidence sometimes serializes a long href with indentation/newlines.
+  // Whitespace is never valid in these HTTP(S) destinations and would break
+  // both the rendered link and DOI/PMID recognition.
+  return value.trim().replace(/\s+/g, '')
 }
 
 function linkifyCitations(root: HTMLElement, referenceUrls: string[]) {
@@ -209,7 +386,7 @@ function htmlElementToMarkdown(root: HTMLElement): string {
     if (tag === 'pre') return `\n\n\`\`\`\n${element.textContent?.trim() ?? ''}\n\`\`\`\n\n`
     if (tag === 'a') {
       const label = children().trim()
-      const href = (element.getAttribute('href') ?? '').trim()
+      const href = cleanExtractedUrl(element.getAttribute('href') ?? '')
       const escapedLabel = label.replace(/([\[\]])/g, '\\$1')
       return href && escapedLabel ? `[${escapedLabel}](${href})` : label
     }
