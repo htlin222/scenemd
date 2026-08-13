@@ -16,6 +16,7 @@ import {
   Bold,
   BookPlus,
   Check,
+  CircleEuro,
   Code2,
   Columns2,
   Eye,
@@ -463,6 +464,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   const [citationLookup, setCitationLookup] = useState<CitationLookupState>({ status: 'idle', citation: '', error: '' })
   const [selectionTool, setSelectionTool] = useState<SelectionToolState | null>(null)
   const [imageTool, setImageTool] = useState<ImageToolState | null>(null)
+  const imageToolRef = useRef<ImageToolState | null>(null)
   const [aiBusy, setAiBusy] = useState<'flat' | 'nested' | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
   const [showLineNumbers, setShowLineNumbers] = useState(() => localStorage.getItem('scenemd-editor-line-numbers') === 'true')
@@ -474,6 +476,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   onChangeRef.current = onChange
   onCursorLineChangeRef.current = onCursorLineChange
   valueRef.current = value
+  imageToolRef.current = imageTool
 
   useEffect(() => {
     localStorage.setItem('scenemd-editor-line-numbers', String(showLineNumbers))
@@ -767,12 +770,19 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         nextOptions.side = 'none'
       }
       if (patch.background === true) nextOptions.layout = 'auto'
-      return { ...current, url: patch.url ?? current.url, options: nextOptions }
+      const next = { ...current, url: patch.url ?? current.url, options: nextOptions }
+      imageToolRef.current = next
+      return next
     })
   }
 
+  const closeImageTool = () => {
+    imageToolRef.current = null
+    setImageTool(null)
+  }
+
   const saveImageSyntax = () => {
-    const current = imageTool
+    const current = imageToolRef.current
     const view = viewRef.current
     if (!current || !view) return
     const source = view.state.doc.toString()
@@ -798,15 +808,35 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const syntax = `![${formatMarpitImageAlt(current.options)}](${current.url.trim()})`
     view.dispatch({
       changes: { from, to, insert: syntax },
+      selection: { anchor: from + syntax.length },
     })
-    setImageTool(null)
+    closeImageTool()
     view.focus()
   }
+
+  useEffect(() => {
+    if (!imageTool) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      closeImageTool()
+      viewRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [imageTool])
 
   useEffect(() => {
     if (!hostRef.current || !editorVisible) return
 
     const synchronizeContextTools = (editor: EditorView) => {
+      // Once opened, the image popover owns its draft lifecycle. Focus moving
+      // into a form field, remote autosave reconciliation, or a mapped editor
+      // selection must not dismiss it or replace its unsaved values.
+      if (imageToolRef.current) {
+        setSelectionTool(null)
+        return
+      }
       const selection = editor.state.selection.main
       const text = selection.empty ? '' : editor.state.sliceDoc(selection.from, selection.to)
       const line = editor.state.doc.lineAt(selection.head)
@@ -841,14 +871,16 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           if (!position || latest.from !== expectedFrom || latest.to !== expectedTo) return
           if (text.trim()) {
             setSelectionTool({ from: expectedFrom, to: expectedTo, text, left: position.left, top: position.selectionTop })
-            setImageTool(null)
+            closeImageTool()
           } else if (imageMatch) {
             setSelectionTool(null)
             setAiError(null)
-            setImageTool({ ...imageMatch, originalUrl: imageMatch.url, options: parseMarpitImageAlt(imageMatch.alt), left: position.left, top: position.imageTop })
+            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseMarpitImageAlt(imageMatch.alt), left: position.left, top: position.imageTop }
+            imageToolRef.current = nextImageTool
+            setImageTool(nextImageTool)
           } else {
             setSelectionTool(null)
-            setImageTool(null)
+            closeImageTool()
             setAiError(null)
           }
         },
@@ -922,6 +954,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     viewRef.current = view
     return () => {
       setSelectionTool(null)
+      imageToolRef.current = null
       setImageTool(null)
       view.destroy()
       viewRef.current = null
@@ -997,7 +1030,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
             ))}
             <button title="Paste Word, CSV, or TSV table" aria-label="Convert pasted table to Markdown" onMouseDown={(event) => event.preventDefault()} onClick={openTableImport}><Sheet size={16} /></button>
             <button title="Insert citation from DOI or PubMed ID" aria-label="Insert AMA citation from DOI or PubMed ID" onMouseDown={(event) => event.preventDefault()} onClick={openCitationImport}><BookPlus size={16} /></button>
-            <button className="openevidence-tool" title="Import OpenEvidence conversation" aria-label="Import OpenEvidence conversation" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowOpenEvidenceImport(true)}><span aria-hidden="true">O</span></button>
+            <button className="openevidence-tool" title="Import OpenEvidence conversation" aria-label="Import OpenEvidence conversation" onMouseDown={(event) => event.preventDefault()} onClick={() => setShowOpenEvidenceImport(true)}><CircleEuro size={16} /></button>
             <button title="Upload image" aria-label="Upload image" onMouseDown={(event) => event.preventDefault()} onClick={() => fileInputRef.current?.click()}><Upload size={16} /></button>
             <input ref={fileInputRef} className="visually-hidden" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" multiple onChange={(event) => {
               if (event.target.files?.length && viewRef.current) imageHandlerRef.current([...event.target.files], viewRef.current)
@@ -1044,8 +1077,8 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         <button className="selection-tool-close" onClick={() => setSelectionTool(null)} aria-label="Close selection tool"><X size={14} /></button>
         {aiError && <small>{aiError}</small>}
       </div>}
-      {imageTool && <aside className="image-syntax-popover" style={{ left: imageTool.left, top: imageTool.top }} onMouseDown={(event) => event.stopPropagation()} aria-label="Image options">
-        <header><div><Image size={16} /><strong>Image</strong><span>Marpit syntax</span></div><button onClick={() => { setImageTool(null); viewRef.current?.focus() }} aria-label="Close image options"><X size={15} /></button></header>
+      {imageTool && <aside className="image-syntax-popover" style={{ left: imageTool.left, top: imageTool.top }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} aria-label="Image options">
+        <header><div><Image size={16} /><strong>Image</strong><span>Marpit syntax</span></div><button onClick={() => { closeImageTool(); viewRef.current?.focus() }} aria-label="Close image options"><X size={15} /></button></header>
         <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: imageTool.options.fit === 'auto' ? 'scale-down' : 'contain', filter: imageFilterCss(imageTool.options.filters) }} /></div>
         <div className="image-syntax-fields">
           <label className="image-field-wide"><span>Image URL</span><input value={imageTool.url} onChange={(event) => updateImageDraft({ url: event.target.value })} /></label>
@@ -1059,7 +1092,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           <label><span>Split size</span><input disabled={!imageTool.options.background || imageTool.options.side === 'none'} value={imageTool.options.splitSize} onChange={(event) => updateImageDraft({ splitSize: event.target.value })} placeholder="50%" /></label>
           <label className="image-field-wide"><span>Filters</span><input value={imageTool.options.filters} onChange={(event) => updateImageDraft({ filters: event.target.value })} placeholder="brightness:.8 sepia:50%" /></label>
         </div>
-        <footer className="image-syntax-actions"><button onClick={() => { setImageTool(null); viewRef.current?.focus() }}>Cancel</button><button className="is-primary" onClick={saveImageSyntax} disabled={!imageTool.url.trim()}><Check size={15} /> Save</button></footer>
+        <footer className="image-syntax-actions"><button onClick={() => { closeImageTool(); viewRef.current?.focus() }}>Cancel</button><button className="is-primary" onClick={saveImageSyntax} disabled={!imageTool.url.trim()}><Check size={15} /> Save</button></footer>
       </aside>}
       {!!imageUploads.length && <div className="image-upload-stack" aria-live="polite">
         {imageUploads.map((upload) => <div key={upload.id} className={`image-upload-toast is-${upload.status}`}>
