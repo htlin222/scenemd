@@ -279,6 +279,9 @@ body.is-resizing-notes * { cursor: row-resize !important; user-select: none !imp
 .image-syntax-fields input:focus, .image-syntax-fields select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .image-syntax-fields .image-field-check { align-content: end; grid-template-columns: auto 1fr; align-items: center; padding-bottom: 8px; text-transform: none; letter-spacing: 0; font-size: 12px; }
 .image-syntax-fields .image-field-check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.image-syntax-actions { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 96%, transparent); backdrop-filter: blur(12px); }
+.image-syntax-actions button { min-width: 78px; height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; background: var(--surface-muted); font-size: 13px; font-weight: 700; }
+.image-syntax-actions button.is-primary { color: #fff; border-color: var(--accent); background: var(--accent); }
 
 /* Cover configuration and HackMD keep metadata out of the Markdown source. */
 .presentation-settings-backdrop, .hackmd-backdrop { position: fixed; inset: 0; z-index: 950; display: grid; place-items: center; padding: 24px; background: rgba(15, 17, 15, 0.5); backdrop-filter: blur(5px); }
