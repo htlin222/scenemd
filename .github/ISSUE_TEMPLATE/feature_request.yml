@@ -1,0 +1,47 @@
+name: Feature request
+description: Propose a capability or change in behavior
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        SceneMD has explicit non-goals in [`spec.md`](../blob/main/spec.md) — a slide canvas, drag positioning, AI deck generation, multiplayer editing, animation timelines, and arbitrary WYSIWYG block editing. Proposals in those areas are not automatically rejected, but they need an argument for why the thesis should change, not only why the feature would be useful.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve
+      description: Describe the situation you are in when you need this, not the solution you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Engine (semantics, regions, planner, scoring)
+        - Editor and contextual tools
+        - Presentation runtime
+        - Export
+        - Backend (Worker, D1, R2, sync)
+        - Tooling and CI
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Compatibility with the project's principles
+      description: Tick the ones you have checked. If your proposal conflicts with one, explain why in the proposal above.
+      options:
+        - label: Markdown remains the canonical source; no generated deck to reconcile
+        - label: The planner stays deterministic and does not require an LLM
+        - label: Manual presentation directives stay escape hatches, not the default workflow
