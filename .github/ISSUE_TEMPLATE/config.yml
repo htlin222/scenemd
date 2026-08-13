@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/htlin222/scenemd/security/policy
+    about: Do not open a public issue. Report privately per SECURITY.md.
+  - name: Product thesis and roadmap
+    url: https://github.com/htlin222/scenemd/blob/main/spec.md
+    about: Read the specification before proposing engine or layout changes.

@@ -1,0 +1,64 @@
+name: Bug report
+description: Something behaves incorrectly outside the planner
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If a scene boundary is in the wrong place, or content overflows a scene, use **Planner / layout regression** instead — it asks for the score breakdown, which is what makes those reproducible.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: markdown
+    attributes:
+      label: Source Markdown
+      description: The smallest document that reproduces it. Paste the source, not a screenshot of it.
+      render: markdown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - Editor (Write / Split / Preview)
+        - Presentation mode
+        - Presenter window
+        - Export dialog
+        - Document list / sharing
+        - HackMD sync
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and OS
+      placeholder: Chrome 141 on macOS 15
+    validations:
+      required: true
+
+  - type: input
+    id: deployment
+    attributes:
+      label: Deployment
+      description: The hosted app, or a local `npm run dev`? Note if Cloudflare bindings are unavailable locally.
+      placeholder: scenemd.pages.dev / local npm run dev
+    validations:
+      required: true
+
+  - type: textarea
+    id: console
+    attributes:
+      label: Console or network errors
+      description: Anything in the browser console or failed requests. Leave blank if none.
+      render: text

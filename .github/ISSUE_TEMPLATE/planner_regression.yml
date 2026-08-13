@@ -1,0 +1,96 @@
+name: Planner / layout regression
+description: A scene boundary, overflow, or layout choice is wrong
+labels: ["bug", "area:engine"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Pagination depends on measured heights, so it is viewport-, theme-, and density-dependent. A report without those is not reproducible — the same document legitimately produces different scenes at different sizes.
+
+        SceneMD exposes a score breakdown per scene in development mode. That breakdown is usually the fastest route to the cause, so please include it.
+
+  - type: textarea
+    id: markdown
+    attributes:
+      label: Source Markdown
+      description: The smallest document that reproduces it.
+      render: markdown
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected scene composition
+      description: |
+        Which blocks should have landed on which scene, and why. For example: "the figure and its caption should stay together on scene 3" or "the H2 should not be the last thing on scene 2".
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual scene composition
+    validations:
+      required: true
+
+  - type: input
+    id: viewport
+    attributes:
+      label: Viewport size
+      description: Width × height in CSS pixels. Pagination capacity is derived from viewport height, so this is required.
+      placeholder: 1440 × 900
+    validations:
+      required: true
+
+  - type: dropdown
+    id: density
+    attributes:
+      label: Density mode
+      options:
+        - Compact
+        - Balanced
+        - Cinematic
+    validations:
+      required: true
+
+  - type: dropdown
+    id: theme
+    attributes:
+      label: Theme
+      options:
+        - default (light)
+        - default (dark)
+        - editorial (light)
+        - editorial (dark)
+        - catppuccin (light)
+        - catppuccin (dark)
+    validations:
+      required: true
+
+  - type: textarea
+    id: scores
+    attributes:
+      label: Score breakdown
+      description: |
+        From the development debug overlay, for the offending scene and ideally its neighbour. Include `fillRatio` and the `ScoreBreakdown` terms.
+      render: text
+
+  - type: checkboxes
+    id: invariants
+    attributes:
+      label: Does this violate a stated invariant?
+      description: From the Evaluation section of spec.md. Tick any that apply.
+      options:
+        - label: A figure was split from its caption
+        - label: Content overflowed the scene (hard overflow)
+        - label: Main content rendered below 20px
+        - label: A heading was orphaned at the end of a scene
+        - label: Boundaries reflowed on a minor edit or resize (stability)
+
+  - type: checkboxes
+    id: directives
+    attributes:
+      label: Presentation directives
+      options:
+        - label: The document uses `present:` directives, and they are included in the source above
