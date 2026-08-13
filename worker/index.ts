@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
+import { mergeMarkdown } from './merge'
 
 interface Env {
   DB: D1Database
@@ -40,12 +41,6 @@ interface DocumentRow {
   updated_at: string
   hackmd_note_id: string | null
   hackmd_synced_at: number
-}
-
-interface TextEdit {
-  start: number
-  end: number
-  insert: string
 }
 
 interface HackMDNote {
@@ -103,44 +98,6 @@ function cleanGeneratedNote(value: string): string {
   return value.trim().replace(/^```(?:markdown|md|text)?\s*/i, '').replace(/\s*```$/i, '').trim()
 }
 
-function changedSpan(base: string, next: string): TextEdit | null {
-  if (base === next) return null
-  let start = 0
-  const sharedLimit = Math.min(base.length, next.length)
-  while (start < sharedLimit && base[start] === next[start]) start += 1
-  let baseEnd = base.length
-  let nextEnd = next.length
-  while (baseEnd > start && nextEnd > start && base[baseEnd - 1] === next[nextEnd - 1]) {
-    baseEnd -= 1
-    nextEnd -= 1
-  }
-  return { start, end: baseEnd, insert: next.slice(start, nextEnd) }
-}
-
-function editsOverlap(left: TextEdit, right: TextEdit): boolean {
-  if (left.start === left.end && right.start === right.end) return left.start === right.start
-  if (left.start === left.end) return left.start > right.start && left.start < right.end
-  if (right.start === right.end) return right.start > left.start && right.start < left.end
-  return left.start < right.end && right.start < left.end
-}
-
-/**
- * Merge the common autosave case: each client changed one contiguous span of
- * the same base document. Ambiguous overlapping edits remain a real conflict
- * and must be resolved by the author.
- */
-function mergeMarkdown(base: string, local: string, cloud: string): string | null {
-  if (local === cloud) return cloud
-  if (local === base) return cloud
-  if (cloud === base) return local
-  const localEdit = changedSpan(base, local)
-  const cloudEdit = changedSpan(base, cloud)
-  if (!localEdit) return cloud
-  if (!cloudEdit) return local
-  if (editsOverlap(localEdit, cloudEdit)) return null
-  const edits = [localEdit, cloudEdit].sort((left, right) => right.start - left.start)
-  return edits.reduce((result, edit) => `${result.slice(0, edit.start)}${edit.insert}${result.slice(edit.end)}`, base)
-}
 
 function hackmdNoteId(value: string): string {
   const trimmed = value.trim()
