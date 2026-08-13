@@ -185,7 +185,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   if (resource === 'ai' && id === 'bullets' && context.request.method === 'POST') {
-    const body = await context.request.json<{ text?: string; documentId?: string }>()
+    const body = await context.request.json<{ text?: string; mode?: 'flat' | 'nested'; documentId?: string }>()
     const selectedText = body.text?.trim() ?? ''
     if (!selectedText || selectedText.length > 12000) return json({ error: 'Select between 1 and 12,000 characters' }, 400)
     const coordinatorId = body.documentId?.replace(/[^a-zA-Z0-9-]/g, '') || 'editor-assistant'
@@ -193,7 +193,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     return stub.fetch(new Request('https://document.internal/ai/bullets', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: selectedText }),
+      body: JSON.stringify({ text: selectedText, mode: body.mode === 'nested' ? 'nested' : 'flat' }),
     }))
   }
 

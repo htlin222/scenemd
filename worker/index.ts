@@ -86,10 +86,17 @@ function parsePresentationConfig(value: string | undefined, title: string): Pres
   }
 }
 
-function cleanBulletMarkdown(value: string): string {
+function cleanBulletMarkdown(value: string, nested = false): string {
   const withoutFence = value.trim().replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/i, '').trim()
-  const lines = withoutFence.split('\n').map((line) => line.trim()).filter(Boolean)
-  return lines.map((line) => /^[-*+]\s+/.test(line) ? `- ${line.replace(/^[-*+]\s+/, '')}` : `- ${line.replace(/^\d+[.)]\s+/, '')}`).join('\n')
+  const lines = withoutFence.split('\n').filter((line) => line.trim())
+  if (!nested) return lines.map((line) => `- ${line.trim().replace(/^(?:[-*+]|\d+[.)])\s+/, '')}`).join('\n')
+  let hasParent = false
+  return lines.map((line) => {
+    const match = line.match(/^(\s*)(?:[-*+]|\d+[.)])\s+(.+)$/)
+    const indented = Boolean(match?.[1]) && hasParent
+    if (!indented) hasParent = true
+    return `${indented ? '  ' : ''}- ${(match?.[2] ?? line).trim()}`
+  }).join('\n')
 }
 
 function cleanGeneratedNote(value: string): string {
@@ -185,19 +192,22 @@ export class DocumentRoom extends DurableObject<Env> {
     const url = new URL(request.url)
 
     if (url.pathname === '/ai/bullets' && request.method === 'POST') {
-      const body = await request.json<{ text?: string }>()
+      const body = await request.json<{ text?: string; mode?: 'flat' | 'nested' }>()
       const text = body.text?.trim() ?? ''
+      const nested = body.mode === 'nested'
       if (!text || text.length > 12000) return json({ error: 'Select between 1 and 12,000 characters' }, 400)
       try {
         const result = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct-fast', {
           messages: [
-            { role: 'system', content: 'Rewrite the selected prose as concise Markdown bullet points. Preserve every factual claim, number, qualifier, citation, and the original language. Do not add new information. Return only a flat Markdown list with one idea per bullet and no preamble or code fence.' },
+            { role: 'system', content: nested
+              ? 'Rewrite the selected prose as a concise Markdown list with at most two levels. Use a top-level bullet for each umbrella idea, followed by indented child bullets for its named components, examples, criteria, or enumerated points. Format children with exactly two spaces before "- ". Preserve every factual claim, number, qualifier, citation, and the original language. Do not add information or create a third level. Return only the Markdown list with no preamble or code fence.'
+              : 'Rewrite the selected prose as concise Markdown bullet points. Preserve every factual claim, number, qualifier, citation, and the original language. Do not add new information. Return only a flat Markdown list with one idea per bullet and no preamble or code fence.' },
             { role: 'user', content: text },
           ],
           temperature: 0.1,
           max_tokens: 768,
         }) as { response?: string }
-        const markdown = cleanBulletMarkdown(result.response ?? '')
+        const markdown = cleanBulletMarkdown(result.response ?? '', nested)
         return markdown ? json({ markdown }) : json({ error: 'The model returned no bullets' }, 502)
       } catch {
         return json({ error: 'Workers AI could not transform this selection' }, 502)

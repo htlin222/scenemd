@@ -462,7 +462,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   const [citationLookup, setCitationLookup] = useState<CitationLookupState>({ status: 'idle', citation: '', error: '' })
   const [selectionTool, setSelectionTool] = useState<SelectionToolState | null>(null)
   const [imageTool, setImageTool] = useState<ImageToolState | null>(null)
-  const [aiBusy, setAiBusy] = useState(false)
+  const [aiBusy, setAiBusy] = useState<'flat' | 'nested' | null>(null)
   const [aiError, setAiError] = useState<string | null>(null)
   const [showLineNumbers, setShowLineNumbers] = useState(() => localStorage.getItem('scenemd-editor-line-numbers') === 'true')
   const [showOutline, setShowOutline] = useState(() => localStorage.getItem('scenemd-editor-outline') !== 'false')
@@ -715,17 +715,17 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     view.focus()
   }
 
-  const makeSelectionBullets = async () => {
+  const makeSelectionBullets = async (mode: 'flat' | 'nested' = 'flat') => {
     const selected = selectionTool
     const view = viewRef.current
     if (!selected || !view || aiBusy) return
-    setAiBusy(true)
+    setAiBusy(mode)
     setAiError(null)
     try {
       const response = await fetch('/api/ai/bullets', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: selected.text, documentId }),
+        body: JSON.stringify({ text: selected.text, mode, documentId }),
       })
       const result = await response.json() as { markdown?: string; error?: string }
       if (!response.ok || !result.markdown) throw new Error(result.error || 'Could not make bullets')
@@ -740,7 +740,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     } catch (error) {
       setAiError(error instanceof Error ? error.message : 'Could not make bullets')
     } finally {
-      setAiBusy(false)
+      setAiBusy(null)
     }
   }
 
@@ -1033,10 +1033,11 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         <div><span>{documentMetrics.lines} lines</span><span>{documentMetrics.words} words</span><span>{documentMetrics.characters} characters</span><span className={`save-status is-${saveStatus}`} role="status" aria-live="polite">{saveStatus === 'saving' ? <><LoaderCircle className="is-spinning" size={12} /> Saving…</> : saveStatus === 'conflict' ? 'Save conflict' : saveStatus === 'offline' ? 'Offline — changes pending' : <><Check size={12} /> Saved to cloud</>}</span><button onClick={onReset}><RotateCcw size={12} /> Reset</button></div>
       </div>
       {selectionTool && <div className="selection-ai-tool" style={{ left: selectionTool.left, top: selectionTool.top }} onMouseDown={(event) => event.preventDefault()}>
-        <button onClick={() => void makeSelectionBullets()} disabled={aiBusy || selectionTool.text.length > 12000} title={selectionTool.text.length > 12000 ? 'Select no more than 12,000 characters' : 'Rewrite selection as Markdown bullets with Workers AI'}>
-          {aiBusy ? <LoaderCircle className="is-spinning" size={15} /> : <Sparkles size={15} />}
-          {aiBusy ? 'Making bullets…' : 'Make bullets'}
+        <button onClick={() => void makeSelectionBullets('flat')} disabled={Boolean(aiBusy) || selectionTool.text.length > 12000} title={selectionTool.text.length > 12000 ? 'Select no more than 12,000 characters' : 'Rewrite selection as flat Markdown bullets with Workers AI'}>
+          {aiBusy === 'flat' ? <LoaderCircle className="is-spinning" size={15} /> : <Sparkles size={15} />}
+          {aiBusy === 'flat' ? 'Making bullets…' : 'Make bullets'}
         </button>
+        <button onClick={() => void makeSelectionBullets('nested')} disabled={Boolean(aiBusy) || selectionTool.text.length > 12000} title="Rewrite selection as a two-level Markdown list">{aiBusy === 'nested' ? <LoaderCircle className="is-spinning" size={15} /> : <ListTree size={15} />}{aiBusy === 'nested' ? 'Nesting…' : 'Nested bullets'}</button>
         <button onClick={makeSelectionColumns} title="Arrange the selection as two responsive columns"><Columns2 size={15} />Two columns</button>
         <span>{selectionTool.text.length.toLocaleString()}</span>
         <button className="selection-tool-close" onClick={() => setSelectionTool(null)} aria-label="Close selection tool"><X size={14} /></button>
