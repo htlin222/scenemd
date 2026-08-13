@@ -277,8 +277,15 @@ Fullscreen, keyboard navigation, manual breaks, step reveals, black/white screen
 - AI deck generation
 - Multiplayer editing or comments
 - Animation timeline or template marketplace
-- PPTX export
 - Arbitrary WYSIWYG block editing
+
+### Note on export
+
+PPTX export was originally listed here as a non-goal and has since been implemented, alongside PDF, slide HTML, Word, document HTML, and Markdown.
+
+The original objection is worth restating, because it still holds: a product that maintains an editable deck has two sources of truth and must reconcile them. The implemented export does not create that problem — PowerPoint and PDF capture each planned scene as a raster image, so the output is a rendering of the document rather than a parallel artifact that can be edited and drift.
+
+Export is therefore a one-way door out of the system, not a second authoring surface. That is what keeps it compatible with the thesis, and it is the constraint to preserve if export is ever extended: the moment a format round-trips back into editable scenes, the non-goal applies again.
 
 ## Evaluation
 
