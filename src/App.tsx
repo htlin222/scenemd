@@ -641,16 +641,29 @@ function App() {
     event.preventDefault()
     const startY = event.clientY
     const startHeight = notesHeight
-    const onMove = (moveEvent: PointerEvent) => setNotesHeight(Math.min(320, Math.max(90, startHeight + moveEvent.clientY - startY)))
-    const onEnd = (endEvent: PointerEvent) => {
-      const height = Math.min(320, Math.max(90, startHeight + endEvent.clientY - startY))
+    let height = startHeight
+    const resizeTo = (clientY: number) => {
+      // The notes panel sits below the handle: moving the handle upward grows it.
+      height = Math.min(320, Math.max(90, startHeight + startY - clientY))
       setNotesHeight(height)
-      localStorage.setItem('scenemd-preview-notes-height', String(Math.round(height)))
+    }
+    const cleanup = () => {
+      document.body.classList.remove('is-resizing-notes')
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onEnd)
+      window.removeEventListener('pointercancel', onCancel)
     }
+    const onMove = (moveEvent: PointerEvent) => resizeTo(moveEvent.clientY)
+    const onEnd = (endEvent: PointerEvent) => {
+      resizeTo(endEvent.clientY)
+      localStorage.setItem('scenemd-preview-notes-height', String(Math.round(height)))
+      cleanup()
+    }
+    const onCancel = () => cleanup()
+    document.body.classList.add('is-resizing-notes')
     window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onEnd, { once: true })
+    window.addEventListener('pointerup', onEnd)
+    window.addEventListener('pointercancel', onCancel)
   }
 
   const exitPresentation = useCallback(() => {

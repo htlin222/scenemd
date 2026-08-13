@@ -211,15 +211,34 @@ export class DocumentRoom extends DurableObject<Env> {
       if (!current || contextLength > 18000) return json({ error: 'The three-scene context must contain between 1 and 18,000 characters' }, 400)
       const concise = body.mode === 'tldr'
       try {
+        let transitionContext = 'PREVIOUS: (none)\nNEXT: (none)'
+        if (body.previous?.trim() || body.next?.trim()) {
+          try {
+            const contextResult = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct-fast', {
+              messages: [
+                {
+                  role: 'system',
+                  content: 'Create transition-only context for a presentation writer. Summarize PREVIOUS and NEXT separately in exactly one short sentence each (maximum 25 words per sentence). Preserve the source language. Do not infer, explain, combine the scenes, or add facts. Return exactly two plain-text lines beginning PREVIOUS: and NEXT:. Use (none) when a scene is absent.',
+                },
+                { role: 'user', content: `PREVIOUS\n${body.previous?.trim() || '(none)'}\n\nNEXT\n${body.next?.trim() || '(none)'}` },
+              ],
+              temperature: 0,
+              max_tokens: 160,
+            }) as { response?: string }
+            transitionContext = cleanGeneratedNote(contextResult.response ?? '') || transitionContext
+          } catch {
+            // Transcript generation remains useful when optional transition context fails.
+          }
+        }
         const result = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct-fast', {
           messages: [
             {
               role: 'system',
               content: concise
-                ? 'Write concise speaker notes for the CURRENT presentation scene. The CURRENT SCENE is the only factual source: do not infer benefits, consequences, background facts, or explanations that are not literally stated there. Read the previous and next scenes only to choose a brief transition and avoid repetition; never elaborate on them. Preserve the source language, facts, numbers, uncertainty, and citations. Produce a short TL;DR speaking script of about 30–60 seconds. Return only the spoken script as plain text, with no heading, bullets, Markdown fence, stage directions, greeting, or audience question.'
-                : 'Write a natural 1:1 speaker transcript for the CURRENT presentation scene. The CURRENT SCENE is the only factual source: do not infer benefits, consequences, background facts, or explanations that are not literally stated there. Read the previous and next scenes only to choose a brief transition and avoid repetition; never elaborate on them. Cover every audience-facing point in the current scene, preserving the source language, facts, numbers, uncertainty, and citations. Write only what the presenter can say aloud, not a summary or outline. Return only the spoken script as plain text, with no heading, bullets, Markdown fence, stage directions, greeting, or audience question.',
+                ? 'Write concise speaker notes for the CURRENT SCENE. The CURRENT SCENE is the primary content and the only factual source. The TRANSITION CONTEXT is not a source: use it only for at most one brief opening connection and one brief closing connection, and never repeat a fact from it unless that fact also appears in the CURRENT SCENE. Do not infer benefits, consequences, background facts, or explanations. Preserve the current scene\'s language, facts, numbers, uncertainty, and citations. Produce a 30–60 second TL;DR speaking script. Return only spoken plain text, with no heading, bullets, Markdown fence, stage directions, greeting, or audience question.'
+                : 'Write a natural 1:1 speaker transcript for the CURRENT SCENE. The CURRENT SCENE must dominate the transcript and is the only factual source. Cover every audience-facing point in it, preserving its language, facts, numbers, uncertainty, and citations. The TRANSITION CONTEXT is not a source: use it only for at most one brief opening connection and one brief closing connection, and never include a fact from it unless that fact also appears in the CURRENT SCENE. Do not infer benefits, consequences, background facts, or explanations. Return only what the presenter can say aloud as plain text, with no heading, bullets, Markdown fence, stage directions, greeting, or audience question.',
             },
-            { role: 'user', content: `PREVIOUS SCENE\n${body.previous?.trim() || '(none)'}\n\nCURRENT SCENE\n${current}\n\nNEXT SCENE\n${body.next?.trim() || '(none)'}` },
+            { role: 'user', content: `TRANSITION CONTEXT (navigation only; not a factual source)\n${transitionContext}\n\nCURRENT SCENE (the content to speak)\n${current}` },
           ],
           temperature: 0.15,
           max_tokens: concise ? 480 : 1400,
