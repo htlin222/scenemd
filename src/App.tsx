@@ -128,6 +128,8 @@ Source content begins below:
 [PASTE SOURCE CONTENT HERE]`
 
 const EMPTY_PLAN: ScenePlan = { scenes: [], averageFill: 0, overflowCount: 0, measuredBlockCount: 0 }
+const CURRENT_DEPLOY_TIME = Date.parse(__SCENEMD_BUILD_TIME__)
+const DEPLOY_CHECK_INTERVAL_MS = 2 * 60 * 1000
 
 type Route = { kind: 'home' } | { kind: 'document'; id: string } | { kind: 'share'; token: string }
 type SaveStatus = 'saved' | 'saving' | 'conflict' | 'offline'
@@ -181,6 +183,10 @@ interface SaveConflictState {
   localConfig: PresentationConfig
 }
 
+interface DeployVersion {
+  deployedAt?: string
+}
+
 function getInitialTheme(): ThemeMode {
   const saved = localStorage.getItem('scenemd-theme')
   if (saved === 'light' || saved === 'dark') return saved
@@ -208,6 +214,20 @@ function absoluteSceneImageUrls(markdown: string): string {
 function formatUpdated(value: string): string {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'Recently' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+}
+
+function formatDeployTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat('zh-TW', {
+    timeZone: 'Asia/Taipei',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date)
 }
 
 function previewViewport(width: number) {
@@ -294,6 +314,8 @@ function App() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [saveConflict, setSaveConflict] = useState<SaveConflictState | null>(null)
+  const [newerDeployTime, setNewerDeployTime] = useState<string | null>(null)
+  const [refreshingDeploy, setRefreshingDeploy] = useState(false)
   const [creating, setCreating] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [shareLink, setShareLink] = useState<string | null>(null)
@@ -362,6 +384,70 @@ function App() {
   useEffect(() => {
     localStorage.setItem('scenemd-scene-sync', String(sceneSyncEnabled))
   }, [sceneSyncEnabled])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const checkForNewDeploy = async () => {
+      if (document.visibilityState === 'hidden') return
+      try {
+        const url = new URL('/version.json', window.location.origin)
+        url.searchParams.set('t', String(Date.now()))
+        const response = await fetch(url, { cache: 'no-store' })
+        if (!response.ok) return
+        const version = await response.json() as DeployVersion
+        const remoteDeployTime = Date.parse(version.deployedAt ?? '')
+        if (!cancelled && Number.isFinite(remoteDeployTime) && remoteDeployTime > CURRENT_DEPLOY_TIME) {
+          setNewerDeployTime(version.deployedAt ?? null)
+        }
+      } catch {
+        // Version checks are deliberately silent while offline.
+      }
+    }
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkForNewDeploy()
+    }
+    const interval = window.setInterval(() => void checkForNewDeploy(), DEPLOY_CHECK_INTERVAL_MS)
+    window.addEventListener('focus', checkForNewDeploy)
+    window.addEventListener('online', checkForNewDeploy)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    void checkForNewDeploy()
+
+    return () => {
+      cancelled = true
+      window.clearInterval(interval)
+      window.removeEventListener('focus', checkForNewDeploy)
+      window.removeEventListener('online', checkForNewDeploy)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
+
+  const forceRefreshForDeploy = useCallback(async () => {
+    if (refreshingDeploy) return
+    setRefreshingDeploy(true)
+    try {
+      if ('serviceWorker' in navigator) {
+        const registration = await navigator.serviceWorker.getRegistration()
+        await registration?.update()
+        const worker = registration?.installing ?? registration?.waiting
+        if (worker && worker.state !== 'activated' && worker.state !== 'redundant') {
+          await new Promise<void>((resolve) => {
+            const timeout = window.setTimeout(resolve, 4000)
+            worker.addEventListener('statechange', () => {
+              if (worker.state === 'activated' || worker.state === 'redundant') {
+                window.clearTimeout(timeout)
+                resolve()
+              }
+            })
+          })
+        }
+      }
+    } catch {
+      // A normal reload is still useful if the service worker update check fails.
+    }
+    window.location.reload()
+  }, [refreshingDeploy])
 
   useEffect(() => {
     if (!sceneSyncEnabled || !showPreview || presenting) return
@@ -1036,6 +1122,12 @@ function App() {
           <button className="is-primary" onClick={() => void keepLocalConflictVersion()}>Keep my version</button>
         </div>
       </aside></div>}
+
+      {newerDeployTime && <aside className="deploy-update-toast" role="status" aria-live="polite">
+        <span className="deploy-update-icon"><RefreshCw className={refreshingDeploy ? 'is-spinning' : ''} size={18} /></span>
+        <span className="deploy-update-copy"><strong>SceneMD 已有新版本</strong><small>部署時間 {formatDeployTime(newerDeployTime)} GMT+8</small></span>
+        <button onClick={() => void forceRefreshForDeploy()} disabled={refreshingDeploy}>{refreshingDeploy ? '更新中…' : '重新整理'}</button>
+      </aside>}
 
       {route.kind !== 'home' && <div className="measurement-root" ref={measureRef} aria-hidden="true" style={{ width: Math.max(320, viewport.width - 150) }}>{blocks.map((block) => <div data-measure-id={block.id} key={block.id}><BlockView block={block} measurement /></div>)}</div>}
 
