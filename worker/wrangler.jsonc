@@ -1,0 +1,30 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "scenemd-live",
+  "main": "./index.ts",
+  "compatibility_date": "2026-08-13",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "scenemd-documents",
+      "database_id": "79c49079-b823-4a10-8b73-cc51740de4c2"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DOCUMENTS",
+        "class_name": "DocumentRoom"
+      }
+    ]
+  },
+  "exports": {
+    "DocumentRoom": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  }
+}

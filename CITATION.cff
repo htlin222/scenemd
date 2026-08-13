@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "SceneMD: A semantic presentation engine for ordinary Markdown"
+version: 0.1.0
+date-released: 2026-08-13
+url: "https://github.com/htlin222/scenemd"
+repository-code: "https://github.com/htlin222/scenemd"
+license: MIT
+authors:
+  - family-names: "Lin"
+    given-names: "Hsieh-Ting"
+    orcid: "https://orcid.org/0009-0002-3974-4528"
+keywords:
+  - markdown
+  - presentations
+  - semantic pagination
+  - responsive design
+  - cloudflare workers
+abstract: >-
+  SceneMD is a document-first presentation engine that transforms ordinary
+  Markdown into responsive, semantically coherent presentation scenes.

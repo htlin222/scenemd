@@ -1,0 +1,55 @@
+{
+  "name": "scenemd",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A semantic, responsive presentation engine for ordinary Markdown.",
+  "license": "MIT",
+  "author": "Hsieh-Ting Lin",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/htlin222/scenemd.git"
+  },
+  "homepage": "https://scenemd.pages.dev",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.cloudflare.json --pretty false",
+    "preview": "vite preview",
+    "deploy:live": "wrangler deploy -c worker/wrangler.jsonc",
+    "deploy": "npm run build && npm run deploy:live && wrangler pages deploy dist --project-name=scenemd --branch=main",
+    "db:migrate:local": "wrangler d1 migrations apply scenemd-documents --local",
+    "db:migrate:remote": "wrangler d1 migrations apply scenemd-documents --remote"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/lang-markdown": "^6.5.2",
+    "@codemirror/language-data": "^6.5.2",
+    "@fontsource/source-sans-3": "5.3.0",
+    "@lezer/highlight": "^1.2.3",
+    "codemirror": "^6.0.2",
+    "katex": "0.18.4",
+    "lucide-react": "1.31.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "4.0.1",
+    "remark-math": "6.0.0",
+    "remark-parse": "11.0.0",
+    "unified": "11.0.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260813.1",
+    "@types/katex": "0.16.7",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "wrangler": "^4.122.0"
+  }
+}

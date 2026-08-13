@@ -1,0 +1,275 @@
+# SceneMD product specification
+
+> **Present documents, not slides.**
+
+## Product definition
+
+SceneMD is an open-source, document-first presentation engine that transforms ordinary Markdown into responsive, semantically coherent presentation scenes.
+
+Traditional tools model:
+
+```text
+Markdown → author-defined slides → presentation
+```
+
+SceneMD models:
+
+```text
+Document → semantic structure → viewport-aware composition → scenes
+```
+
+The user normally writes ordinary Markdown without slide delimiters. The document remains the single source of truth; presentation mode is derived state.
+
+## Core thesis
+
+The central product and technical question is:
+
+> Given this document, this viewport, and this speaking context, what should the audience see right now?
+
+```ts
+plan(
+  document: PresentationAST,
+  viewport: Viewport,
+  theme: Theme,
+  density: Density,
+  previousPlan?: ScenePlan,
+): Scene[]
+```
+
+The quality, stability, and explainability of this function are the primary differentiators.
+
+## Product principles
+
+1. **Document-first.** Markdown is canonical; there is no second deck artifact.
+2. **Zero presentation syntax by default.** At least 90% of normal documents should present acceptably without overrides.
+3. **Scenes, not slides.** A scene is a semantic unit currently projected into a viewport.
+4. **Semantic integrity.** Keep headings with their bodies, images with captions, and short lists intact.
+5. **Responsive composition.** Layout adapts and may repaginate when the viewport materially changes.
+6. **Deterministic core.** Identical content, viewport, theme, and density produce the same plan. AI provides optional hints or editor transformations only.
+7. **Progressive control.** System decisions → semantic hints → layout hints → manual breaks.
+8. **Readable typography.** Prefer a coherent break over shrinking main content below 20px.
+
+## Engine architecture
+
+```text
+Markdown source
+      ↓
+remark / mdast
+      ↓
+Semantic normalizer
+      ↓
+Presentation AST
+      ↓
+Structural planner
+      ↓
+SemanticRegion[]
+      ↓
+fit test ── comfortable ─────────┐
+      │                          │
+      └─ overflow → measurement  │
+                         ↓       │
+                  semantic paginator
+                         ↓       │
+                         Scene[] ◀┘
+                            ↓
+                  responsive renderer
+```
+
+Pagination is two-stage. The structural planner first derives regions from headings, manual breaks, and semantic blocks. Comfortable regions become scenes directly. Only dense or overflowing regions enter the measured breakpoint search.
+
+## Presentation AST
+
+```ts
+interface PresentationBlock {
+  id: string
+  type: 'heading' | 'paragraph' | 'list' | 'figure' |
+        'blockquote' | 'code' | 'math' | 'table'
+  semanticRole: 'title' | 'section-title' | 'body' |
+                'key-message' | 'evidence' | 'figure' |
+                'caption' | 'aside' | 'reference'
+  importance: number
+  keepTogether: boolean
+  keepWithNext: boolean
+  keepWithPrevious: boolean
+  breakBefore: 'never' | 'avoid' | 'auto' | 'prefer' | 'always'
+  breakAfter: 'never' | 'avoid' | 'auto' | 'prefer' | 'always'
+  visibility: 'normal' | 'hidden' | 'presentation-only'
+  layoutHint?: 'auto' | 'hero' | 'media' | 'statement'
+  sourceRange: SourceRange
+}
+```
+
+Every block retains a stable source range. Scene identity derives from region and boundary block identities, not array position alone.
+
+## Semantic normalization
+
+- Headings strongly keep with the next block.
+- Paragraphs are atomic for the MVP.
+- Short lists remain atomic; long lists split only at item boundaries with continuation context.
+- Image and caption normalize into one atomic figure.
+- Code prefers atomic rendering and may split only at logical line boundaries.
+- Display math never splits.
+- Quote and attribution remain together.
+- Small tables remain atomic. Large tables repeat headers and paginate by logical row groups.
+
+## Measurement and fit
+
+Capacity must use actual browser geometry, not character or word counts. Measurements reflect fonts, theme, viewport, typography, highlighting, math, and resolved media dimensions.
+
+```ts
+interface FitResult {
+  fitsComfortably: boolean
+  fitsHardLimit: boolean
+  usedHeight: number
+  comfortableHeight: number
+  maximumHeight: number
+  fillRatio: number
+}
+```
+
+Useful states are Comfortable, Dense, and Overflow. Optimal fill is intentionally below 100%.
+
+## Pagination and scoring
+
+Overflowing regions generate candidate boundaries primarily between semantic blocks. Each candidate is measured and scored:
+
+```text
+quality = semantic coherence
+        + density quality
+        + breakpoint quality
+        + visual balance
+        + hierarchy
+        + layout quality
+        + stability
+        - fragmentation
+        - orphaning
+        - crowding
+        - excessive whitespace
+        - readability violations
+        - overflow
+```
+
+Every boundary must expose its score breakdown in development mode. A manual break has infinite priority and cannot be overridden.
+
+Minor edits should preserve prior boundaries when their quality remains competitive. This stability supports rehearsal, scene references, and collaborative discussion.
+
+## Density modes
+
+- **Compact:** teaching and technical talks; target fill roughly 70–85%.
+- **Balanced:** default; target fill roughly 55–75%.
+- **Cinematic:** keynote and storytelling; target fill roughly 30–55%.
+
+Density influences the objective function; it is not a hard typography threshold.
+
+## Layout grammar
+
+The MVP has a deliberately small deterministic grammar:
+
+```text
+cover
+chapter
+text
+text-media
+media-dominant
+statement
+```
+
+Wide scenes may use columns; narrow scenes stack. If the responsive layout exceeds capacity, the planner replans.
+
+## Navigation and presentation chrome
+
+- Cover metadata comes from separate presentation configuration, not the Markdown body.
+- H1 headings define chapter navigation.
+- H1 chapter dividers hide the top navigation.
+- H3 scenes show their parent H2 as a breadcrumb.
+- Cover scenes hide navigation and progress.
+- Chapter dividers hide navigation but retain progress.
+- Other scenes show clickable H1 navigation and a bottom progress track with `current / total`.
+
+## Manual overrides
+
+```markdown
+<!-- present: break -->
+<!-- present: keep -->
+<!-- present: hero -->
+<!-- present: hide -->
+<!-- present: only -->
+<!-- present: step -->
+```
+
+Overrides are escape hatches. Ordinary documents should not require them.
+
+## Editor and contextual tools
+
+The default environment is a calm Markdown document editor, not a slide canvas or thumbnail rail. Write, Split, and Preview modes follow familiar GitHub Markdown conventions.
+
+Contextual tools include:
+
+- selection-to-bullets via Workers AI;
+- click-to-edit Marpit image syntax with live preview;
+- clipboard image upload to R2 and immediate Markdown insertion;
+- OpenEvidence conversation import;
+- pasted TSV-to-GFM-table normalization;
+- presentation cover configuration;
+- manual HackMD pull, push, and conflict-aware smart sync.
+
+AI never controls pagination and must preserve facts, numbers, qualifiers, citations, and source language when transforming selected prose.
+
+## Persistence and security
+
+- Cloudflare D1 stores documents, revisions, presentation configuration, shares, and integration metadata.
+- A Durable Object serializes document edits and rejects stale base revisions.
+- R2 stores uploaded images.
+- Cloudflare Access protects authoring routes for approved identities.
+- Read-only shares use unguessable tokens.
+- HackMD and Cloudflare credentials are Worker or repository secrets and never reach the browser or source control.
+
+## MVP requirements
+
+### Markdown
+
+H1–H3, paragraphs, ordered/unordered lists, images, blockquotes, code, inline code, GFM, math, tables, task lists, and horizontal rules.
+
+### Engine
+
+Markdown parsing, semantic normalization, structural regions, DOM measurement, fit testing, overflow pagination, breakpoint scoring, stable identity, source mapping, and explainable debug output.
+
+### Runtime
+
+Fullscreen, keyboard navigation, manual breaks, step reveals, black/white screens, light/dark themes, density modes, and responsive replanning.
+
+## Explicit non-goals for the MVP
+
+- PowerPoint-style canvas or drag positioning
+- Slide thumbnails as the primary navigation
+- AI deck generation
+- Multiplayer editing or comments
+- Animation timeline or template marketplace
+- PPTX export
+- Arbitrary WYSIWYG block editing
+
+## Evaluation
+
+Test a corpus containing short and long essays, technical documentation, academic and medical lectures, image-heavy, list-heavy, code-heavy, math-heavy, and mixed README documents across 16:9, 4:3, ultrawide, and narrow viewports in every density mode.
+
+Track overflow, orphan headings, split figures, split short lists, font violations, scene count, fill distribution, and pagination stability.
+
+Critical invariants:
+
+```text
+split image-caption pairs = 0
+unintentional hard overflow = 0
+main content below 20px = 0
+```
+
+## Success and failure
+
+MVP success means a user can open an ordinary Markdown document and present it without manually inserting scene boundaries. Strong success means manual breaks are rare. Excellent success means the same source naturally serves as notes, handout, documentation, and presentation.
+
+The product has failed its thesis if users routinely insert breaks, resize text, choose layouts, preview every scene, or repair overflow before presenting.
+
+The canonical transformation remains:
+
+```text
+Document → Meaning → Scene → Viewport
+```
