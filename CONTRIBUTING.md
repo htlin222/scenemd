@@ -18,6 +18,8 @@ npm run build
 
 Keep pull requests focused. For planner changes, explain which semantic constraint or score changes and test the effect across wide and narrow viewports.
 
+A pull request that changes what the product does updates `README.md` and `spec.md` in the same change. Documentation that lags behind behavior is how the specification came to list an implemented feature as a non-goal.
+
 ## Design principles
 
 - Prefer coherent under-filled scenes over crowded scenes.
