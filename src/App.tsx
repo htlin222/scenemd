@@ -232,6 +232,29 @@ function sourceOffset(markdown: string, range: Pick<SourceRange, 'startLine' | '
 function updateSceneSpeakerNote(markdown: string, scene: Scene | undefined, value: string): string {
   if (!scene || scene.role === 'cover') return markdown
   const note = value.trim().replaceAll('-->', '--\u200b>')
+  const insertAt = sourceOffset(markdown, { startLine: scene.sourceRange.endLine, startColumn: scene.sourceRange.endColumn })
+
+  // During fast typing the scene plan may still point to the source range from
+  // before the first note character was inserted. Reuse and consolidate any
+  // adjacent speaker-note comments instead of appending another comment.
+  let cursor = insertAt
+  let adjacentNoteEnd: number | null = null
+  while (cursor < markdown.length) {
+    const whitespace = markdown.slice(cursor).match(/^\s*/)?.[0] ?? ''
+    const commentStart = cursor + whitespace.length
+    if (!markdown.startsWith('<!--', commentStart)) break
+    const commentEnd = markdown.indexOf('-->', commentStart + 4)
+    if (commentEnd < 0) break
+    const comment = markdown.slice(commentStart + 4, commentEnd).trim()
+    if (/^(?:present\s*:|_?(?:class|paginate|backgroundColor|color|header|footer|theme)\s*:)/i.test(comment)) break
+    adjacentNoteEnd = commentEnd + 3
+    cursor = adjacentNoteEnd
+  }
+  if (adjacentNoteEnd !== null) {
+    const replacement = note ? `\n\n<!-- ${note} -->` : ''
+    return `${markdown.slice(0, insertAt).replace(/[ \t]+$/g, '')}${replacement}${markdown.slice(adjacentNoteEnd)}`
+  }
+
   const ranges = scene.blocks.flatMap((block) => block.speakerNoteRanges ?? [])
     .sort((a, b) => a.startLine - b.startLine || a.startColumn - b.startColumn)
   if (ranges.length) {
@@ -243,7 +266,6 @@ function updateSceneSpeakerNote(markdown: string, scene: Scene | undefined, valu
     }, markdown)
   }
   if (!note) return markdown
-  const insertAt = sourceOffset(markdown, { startLine: scene.sourceRange.endLine, startColumn: scene.sourceRange.endColumn })
   return `${markdown.slice(0, insertAt)}\n\n<!-- ${note} -->${markdown.slice(insertAt)}`
 }
 
