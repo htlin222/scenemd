@@ -111,7 +111,7 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
             {conversation.turns.map((turn, index) => <label key={`${turn.question}-${index}`} className={selected.has(index) ? 'is-selected' : ''}>
               <input type="checkbox" checked={selected.has(index)} onChange={() => toggleTurn(index)} />
               <span className="oe-check"><Check size={13} /></span>
-              <span><strong>{turn.question}</strong><small>{turn.answerMarkdown.replace(/[#*_`\[\]()]/g, '').slice(0, 180)}</small></span>
+              <span><strong>{turn.question}</strong><small>{turn.answerMarkdown.replace(/[#*_`[\]()]/g, '').slice(0, 180)}</small></span>
             </label>)}
           </div>}
         </div>

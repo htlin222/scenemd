@@ -27,7 +27,7 @@ export function inlineText(block: PresentationBlock): string {
 
 export function pageStyles(): string {
   const styles: string[] = []
-  for (const sheet of [...document.styleSheets]) {
+  for (const sheet of document.styleSheets) {
     try {
       styles.push([...sheet.cssRules].map((rule) => rule.cssText).join('\n'))
     } catch {
