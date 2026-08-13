@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Copy, Download, LoaderCircle, RefreshCw, SquareLibrary, X } from 'lucide-react'
+import { Braces, Check, Copy, Download, ExternalLink, LayoutGrid, LoaderCircle, RefreshCw, SquareLibrary, X } from 'lucide-react'
 import { scanBibliographySources, urlBibtex } from '../citations'
 
 function fallbackDoiBibtex(doi: string): string {
@@ -11,6 +11,64 @@ function safeFileName(value: string): string {
   return `${value.trim().replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').toLowerCase() || 'references'}.bib`
 }
 
+interface BibliographyCard {
+  type: string
+  key: string
+  title: string
+  authors: string
+  venue: string
+  year: string
+  doi: string
+  url: string
+}
+
+function bibtexFields(entry: string): Record<string, string> {
+  const fields: Record<string, string> = {}
+  const pattern = /^\s*([a-z][\w-]*)\s*=\s*([{\"])/gim
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(entry))) {
+    const name = match[1].toLowerCase()
+    const opener = match[2]
+    const start = pattern.lastIndex
+    let end = start
+    if (opener === '{') {
+      let depth = 1
+      while (end < entry.length && depth > 0) {
+        if (entry[end] === '{') depth += 1
+        else if (entry[end] === '}') depth -= 1
+        end += 1
+      }
+      fields[name] = entry.slice(start, Math.max(start, end - 1)).trim()
+    } else {
+      while (end < entry.length && (entry[end] !== '"' || entry[end - 1] === '\\')) end += 1
+      fields[name] = entry.slice(start, end).trim()
+      end += 1
+    }
+    pattern.lastIndex = end
+  }
+  return fields
+}
+
+function cleanBibtexValue(value = ''): string {
+  return value.replace(/[{}]/g, '').replace(/\\([%&_#])/g, '$1').replace(/\s+/g, ' ').trim()
+}
+
+function bibliographyCard(entry: string): BibliographyCard {
+  const identity = entry.match(/^\s*@([a-z]+)\s*{\s*([^,\s]+)/i)
+  const fields = bibtexFields(entry)
+  const doi = cleanBibtexValue(fields.doi)
+  return {
+    type: identity?.[1] ?? 'misc',
+    key: identity?.[2] ?? 'reference',
+    title: cleanBibtexValue(fields.title) || doi || 'Untitled reference',
+    authors: cleanBibtexValue(fields.author).replace(/\s+and\s+/gi, ', '),
+    venue: cleanBibtexValue(fields.journal || fields.booktitle || fields.publisher),
+    year: cleanBibtexValue(fields.year || fields.date || fields.urldate),
+    doi,
+    url: cleanBibtexValue(fields.url) || (doi ? `https://doi.org/${doi}` : ''),
+  }
+}
+
 export function BibliographyDialog({ markdown, documentTitle, onClose }: { markdown: string; documentTitle: string; onClose: () => void }) {
   const sources = useMemo(() => scanBibliographySources(markdown), [markdown])
   const [reloadKey, setReloadKey] = useState(0)
@@ -18,6 +76,9 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
   const [failedDois, setFailedDois] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
+  const [view, setView] = useState<'cards' | 'raw'>(() => localStorage.getItem('scenemd-bibliography-view') === 'raw' ? 'raw' : 'cards')
+
+  useEffect(() => localStorage.setItem('scenemd-bibliography-view', view), [view])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -58,6 +119,7 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
 
   const urlEntries = useMemo(() => sources.urls.map((entry, index) => urlBibtex(entry, index)), [sources.urls])
   const bibliography = [...doiEntries, ...urlEntries].join('\n\n')
+  const cards = useMemo(() => [...doiEntries, ...urlEntries].map(bibliographyCard), [doiEntries, urlEntries])
   const total = sources.dois.length + sources.urls.length
 
   const copyBibliography = async () => {
@@ -85,10 +147,17 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
         <span><strong>{sources.dois.length}</strong> DOI{sources.dois.length === 1 ? '' : 's'}</span>
         <span><strong>{sources.urls.length}</strong> web source{sources.urls.length === 1 ? '' : 's'}</span>
         <span><strong>{total}</strong> unique entries</span>
-        <button onClick={() => setReloadKey((value) => value + 1)} disabled={loading}><RefreshCw className={loading ? 'is-spinning' : undefined} size={14} /> Rescan</button>
+        <div className="bibliography-view-switch" role="group" aria-label="Bibliography view"><button className={view === 'cards' ? 'is-active' : ''} onClick={() => setView('cards')} aria-pressed={view === 'cards'}><LayoutGrid size={14} /> Cards</button><button className={view === 'raw' ? 'is-active' : ''} onClick={() => setView('raw')} aria-pressed={view === 'raw'}><Braces size={14} /> Raw .bib</button></div>
+        <button className="bibliography-rescan" onClick={() => setReloadKey((value) => value + 1)} disabled={loading}><RefreshCw className={loading ? 'is-spinning' : undefined} size={14} /> Rescan</button>
       </div>
       <div className="bibliography-content">
-        {loading && !bibliography ? <div className="bibliography-empty"><LoaderCircle className="is-spinning" size={22} /><span>Resolving DOI metadata…</span></div> : bibliography ? <textarea value={bibliography} readOnly spellCheck={false} aria-label="Generated BibTeX bibliography" /> : <div className="bibliography-empty"><SquareLibrary size={24} /><strong>No citations found</strong><span>Add a DOI, Markdown link, or bare URL to the document.</span></div>}
+        {loading && !bibliography ? <div className="bibliography-empty"><LoaderCircle className="is-spinning" size={22} /><span>Resolving DOI metadata…</span></div> : bibliography && view === 'raw' ? <textarea value={bibliography} readOnly spellCheck={false} aria-label="Generated BibTeX bibliography" /> : bibliography ? <div className="bibliography-card-grid">{cards.map((card, index) => <article className="bibliography-card" key={`${card.key}-${index}`}>
+          <header><span>@{card.type}</span><code>{card.key}</code></header>
+          <h3>{card.title}</h3>
+          {card.authors && <p>{card.authors}</p>}
+          <div>{card.venue && <span>{card.venue}</span>}{card.year && <span>{card.year}</span>}{card.doi && <span>DOI {card.doi}</span>}</div>
+          {card.url && <a href={card.url} target="_blank" rel="noreferrer">Open source <ExternalLink size={13} /></a>}
+        </article>)}</div> : <div className="bibliography-empty"><SquareLibrary size={24} /><strong>No citations found</strong><span>Add a DOI, Markdown link, or bare URL to the document.</span></div>}
         {!!failedDois.length && <p className="bibliography-warning">Metadata was unavailable for {failedDois.length} DOI{failedDois.length === 1 ? '' : 's'}; minimal DOI entries were generated instead.</p>}
       </div>
       <footer>

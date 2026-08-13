@@ -147,6 +147,7 @@ export function MarkdownDocumentView({ value, className = '' }: { value: string;
         skipHtml
         components={{
           a({ href, children }) {
+            if (href?.startsWith('#citation-')) return <sup className="citation-marker citation-key"><span title="Pandoc citation key">{children}</span></sup>
             return href?.startsWith('#reference-')
               ? <sup className="citation-marker"><a href={href}>{children}</a></sup>
               : <a href={href}>{children}</a>

@@ -812,10 +812,25 @@ body { background: var(--surface); }
 .bibliography-summary { min-height: 48px; display: flex; align-items: center; gap: 18px; padding: 0 22px; color: var(--muted); border-bottom: 1px solid var(--line); font-size: 11px; }
 .bibliography-summary span { display: inline-flex; align-items: baseline; gap: 4px; }
 .bibliography-summary strong { color: var(--ink); font-size: 14px; }
-.bibliography-summary button { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; color: var(--muted); border-radius: 4px; background: transparent; font-size: 11px; }
+.bibliography-summary button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; color: var(--muted); border-radius: 4px; background: transparent; font-size: 11px; white-space: nowrap; }
 .bibliography-summary button:hover { color: var(--ink); background: var(--surface-muted); }
+.bibliography-view-switch { margin-left: auto; display: inline-flex; padding: 2px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); }
+.bibliography-view-switch button { border-radius: 3px; }
+.bibliography-view-switch button.is-active { color: var(--ink); background: var(--surface-muted); }
+.bibliography-rescan { flex: 0 0 auto; }
 .bibliography-content { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 8px; padding: 18px 22px; }
 .bibliography-content textarea { width: 100%; min-height: 360px; flex: 1; resize: none; padding: 15px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; outline: 0; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bibliography-card-grid { min-height: 360px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; overflow-y: auto; align-content: start; }
+.bibliography-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.bibliography-card > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--accent-ink); font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.bibliography-card > header code { min-width: 0; overflow: hidden; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; text-transform: none; white-space: nowrap; }
+.bibliography-card h3 { margin: 12px 0 7px; font-size: 16px; line-height: 1.35; letter-spacing: -0.02em; }
+.bibliography-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.bibliography-card > div { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 11px; color: var(--muted); font-size: 11px; }
+.bibliography-card > div span + span::before { content: '·'; margin-right: 10px; color: var(--line); }
+.bibliography-card > a { width: fit-content; margin-top: 13px; display: inline-flex; align-items: center; gap: 5px; color: var(--accent-ink); font-size: 12px; font-weight: 700; text-decoration: none; }
+.bibliography-card > a:hover { text-decoration: underline; }
+.citation-marker.citation-key span { color: var(--scene-accent, var(--accent-ink)); font-weight: 700; }
 .bibliography-empty { min-height: 360px; flex: 1; display: grid; place-items: center; align-content: center; gap: 8px; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; font-size: 12px; text-align: center; }
 .bibliography-empty strong { color: var(--ink); font-size: 14px; }
 .bibliography-warning { margin: 0; color: #9a6700; font-size: 11px; }
@@ -924,6 +939,7 @@ body { background: var(--surface); }
   .llm-prompt-dialog { width: 100%; max-height: 100vh; height: 100vh; border: 0; border-radius: 0; }
   .bibliography-backdrop { padding: 0; }
   .bibliography-dialog { width: 100%; max-height: 100vh; height: 100vh; border: 0; border-radius: 0; }
+  .bibliography-card-grid { grid-template-columns: 1fr; }
   .export-backdrop { padding: 0; }
   .export-dialog { width: 100%; max-height: 100vh; height: 100vh; border: 0; border-radius: 0; }
   .export-grid { grid-template-columns: 1fr; overflow-y: auto; }

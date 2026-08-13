@@ -222,10 +222,14 @@ export function remarkBracketCitations() {
         }
         const parts: MdastNode[] = []
         let cursor = 0
-        for (const match of node.value.matchAll(/\[(\d+)]/g)) {
+        for (const match of node.value.matchAll(/\[(\d+)]|\[((?:@[a-z0-9_:.+/-]+)(?:\s*;\s*@[a-z0-9_:.+/-]+)*)]/gi)) {
           if (match.index === undefined) continue
           if (match.index > cursor) parts.push({ type: 'text', value: node.value.slice(cursor, match.index) })
-          parts.push({ type: 'link', url: `#reference-${match[1]}`, children: [{ type: 'text', value: match[0] }] } as MdastNode & { url: string })
+          const citationKey = match[2]?.match(/@([a-z0-9_:.+/-]+)/i)?.[1]
+          const url = match[1]
+            ? `#reference-${match[1]}`
+            : `#citation-${citationKey?.replace(/[^a-z0-9_-]+/gi, '-') || 'unresolved'}`
+          parts.push({ type: 'link', url, children: [{ type: 'text', value: match[0] }] } as MdastNode & { url: string })
           cursor = match.index + match[0].length
         }
         if (cursor < node.value.length) parts.push({ type: 'text', value: node.value.slice(cursor) })

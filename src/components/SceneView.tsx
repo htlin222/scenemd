@@ -31,6 +31,7 @@ function InlineContent({ nodes = [] }: { nodes?: InlineNode[] }) {
       case 'delete':
         return <del key={key}><InlineContent nodes={node.children} /></del>
       case 'link':
+        if (node.url.startsWith('#citation-')) return <sup key={key} className="citation-marker citation-key"><span title="Pandoc citation key"><InlineContent nodes={node.children} /></span></sup>
         return node.url.startsWith('#reference-')
           ? <sup key={key} className="citation-marker"><a href={node.url}><InlineContent nodes={node.children} /></a></sup>
           : <a key={key} href={node.url} target="_blank" rel="noreferrer"><InlineContent nodes={node.children} /></a>
