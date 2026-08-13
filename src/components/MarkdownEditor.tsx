@@ -407,7 +407,7 @@ function tableFromHtml(html: string): string[][] {
 }
 
 function detectPastedTable(source: string, clipboardHtml = ''): { rows: string[][]; format: 'Word / HTML' | 'TSV' | 'CSV' | null } {
-  const htmlRows = tableFromHtml(clipboardHtml || (/\<table[\s>]/i.test(source) ? source : ''))
+  const htmlRows = tableFromHtml(clipboardHtml || (/<table[\s>]/i.test(source) ? source : ''))
   if (htmlRows.length) return { rows: htmlRows, format: 'Word / HTML' }
   if (source.includes('\t')) return { rows: parseDelimitedTable(source, '\t'), format: 'TSV' }
   const csvRows = parseDelimitedTable(source, ',')
@@ -595,7 +595,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           const result = await response.json() as { url?: string; error?: string }
           if (!response.ok || !result.url) throw new Error(result.error || 'Image upload failed')
           const imageUrl = new URL(result.url, window.location.origin).toString()
-          const alt = (file.name || 'Pasted image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '')
+          const alt = (file.name || 'Pasted image').replace(/\.[^.]+$/, '').replace(/[[\]]/g, '')
           const markdownImage = `${insertAt > 0 ? '\n' : ''}![${alt}](${imageUrl})\n`
           const activeView = viewRef.current
           if (activeView === view) {

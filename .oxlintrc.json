@@ -1,0 +1,58 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "react", "jsx-a11y", "promise", "import"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "globals": {
+    "__SCENEMD_BUILD_TIME__": "readonly"
+  },
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    ".wrangler",
+    "artifacts",
+    "public",
+    "csl"
+  ],
+  "rules": {
+    "no-unused-vars": ["error", {
+      "argsIgnorePattern": "^_",
+      "varsIgnorePattern": "^_",
+      "caughtErrorsIgnorePattern": "^_"
+    }],
+    "react-hooks/exhaustive-deps": "warn",
+    "react-hooks/rules-of-hooks": "error",
+
+    "react/react-in-jsx-scope": "off",
+
+    "jsx-a11y/prefer-tag-over-role": "warn",
+    "jsx-a11y/no-static-element-interactions": "warn",
+    "jsx-a11y/click-events-have-key-events": "warn",
+    "jsx-a11y/no-noninteractive-element-interactions": "warn"
+  },
+  "overrides": [
+    {
+      "files": ["worker/**/*.ts", "functions/**/*.ts"],
+      "env": {
+        "browser": false,
+        "worker": true,
+        "es2024": true
+      }
+    },
+    {
+      "files": ["tools/**/*.mjs", "*.config.ts"],
+      "env": {
+        "browser": false,
+        "node": true,
+        "es2024": true
+      }
+    }
+  ]
+}

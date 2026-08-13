@@ -156,6 +156,9 @@ function canonicalUrl(value: string): string {
   try {
     const url = new URL(value)
     url.hash = ''
+    // The spread is load-bearing: deleting from a live URLSearchParams iterator
+    // while iterating it skips entries. Snapshot the keys before mutating.
+    // oxlint-disable-next-line unicorn/no-useless-spread
     for (const key of [...url.searchParams.keys()]) if (/^utm_/i.test(key)) url.searchParams.delete(key)
     url.pathname = url.pathname.replace(/\/$/, '')
     return url.toString().toLowerCase()
@@ -359,7 +362,7 @@ function resolveNextImage(source: string): string {
 }
 
 function removeFollowUps(root: HTMLElement) {
-  for (const element of [...root.querySelectorAll('*')]) {
+  for (const element of root.querySelectorAll('*')) {
     if (normalize(element.textContent ?? '') === 'Follow-Up Questions') {
       (element.closest('[class*="follow-up"]') || element.parentElement || element).remove()
       return
@@ -387,7 +390,7 @@ function htmlElementToMarkdown(root: HTMLElement): string {
     if (tag === 'a') {
       const label = children().trim()
       const href = cleanExtractedUrl(element.getAttribute('href') ?? '')
-      const escapedLabel = label.replace(/([\[\]])/g, '\\$1')
+      const escapedLabel = label.replace(/([[\]])/g, '\\$1')
       return href && escapedLabel ? `[${escapedLabel}](${href})` : label
     }
     if (tag === 'img') {

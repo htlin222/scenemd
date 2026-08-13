@@ -24,7 +24,7 @@ interface BibliographyCard {
 
 function bibtexFields(entry: string): Record<string, string> {
   const fields: Record<string, string> = {}
-  const pattern = /^\s*([a-z][\w-]*)\s*=\s*([{\"])/gim
+  const pattern = /^\s*([a-z][\w-]*)\s*=\s*([{"])/gim
   let match: RegExpExecArray | null
   while ((match = pattern.exec(entry))) {
     const name = match[1].toLowerCase()
