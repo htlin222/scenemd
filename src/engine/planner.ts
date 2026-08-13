@@ -71,17 +71,39 @@ function splitInlineContent(nodes: NonNullable<PresentationBlock['inlines']>, pa
   return groups.filter((group) => group.length > 0)
 }
 
-function continuationParts(block: PresentationBlock, measuredHeight: number, capacity: number): PresentationBlock[] {
-  if (measuredHeight <= capacity) return [block]
-  const partCount = Math.max(2, Math.ceil(measuredHeight / (capacity * 0.62)))
+function continuationParts(block: PresentationBlock, measuredHeight: number, capacity: number, measurements: Map<string, number>): PresentationBlock[] {
+  const availableCapacity = block.semanticRole === 'reference' ? Math.max(180, capacity - 112) : capacity
+  if (measuredHeight <= availableCapacity) return [block]
+  const partCount = Math.max(2, Math.ceil(measuredHeight / (availableCapacity * 0.82)))
   let parts: PresentationBlock[] = []
 
   if ((block.type === 'paragraph' || block.type === 'blockquote') && block.inlines?.length) {
     parts = splitInlineContent(block.inlines, partCount).map((inlines) => ({ ...block, inlines }))
   } else if (block.type === 'list' && block.listItems?.length) {
-    const size = Math.max(1, Math.ceil(block.listItems.length / partCount))
-    for (let offset = 0; offset < block.listItems.length; offset += size) {
-      parts.push({ ...block, listItems: block.listItems.slice(offset, offset + size), listStart: (block.listStart ?? 1) + offset })
+    if (block.semanticRole === 'reference') {
+      let offset = 0
+      while (offset < block.listItems.length) {
+        const start = offset
+        let height = 0
+        while (offset < block.listItems.length) {
+          const itemHeight = measurements.get(`${block.id}:item:${offset}`) ?? measuredHeight / block.listItems.length
+          const nextHeight = height + itemHeight + (offset === start ? 0 : 7)
+          if (offset > start && nextHeight > availableCapacity) break
+          height = nextHeight
+          offset += 1
+        }
+        parts.push({
+          ...block,
+          listItems: block.listItems.slice(start, offset),
+          listStart: (block.listStart ?? 1) + start,
+          estimatedHeight: height,
+        })
+      }
+    } else {
+      const size = Math.max(1, Math.ceil(block.listItems.length / partCount))
+      for (let offset = 0; offset < block.listItems.length; offset += size) {
+        parts.push({ ...block, listItems: block.listItems.slice(offset, offset + size), listStart: (block.listStart ?? 1) + offset })
+      }
     }
   } else if (block.type === 'code' && block.value) {
     const lines = block.value.split('\n')
@@ -115,11 +137,23 @@ function continuationParts(block: PresentationBlock, measuredHeight: number, cap
     id: `${block.id}-part-${index + 1}`,
     continuation: index > 0,
     keepWithPrevious: index > 0,
-    estimatedHeight: measuredHeight / parts.length,
+    estimatedHeight: part.estimatedHeight ?? measuredHeight / parts.length,
   }))
 }
 
 function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>): number {
+  if (chooseLayout(blocks) === 'legend') {
+    const headings = blocks.filter((block) => block.type === 'heading')
+    const figures = blocks.filter((block) => block.type === 'figure')
+    const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
+    const headingHeight = headings.reduce((total, block) => total + blockHeight(block, measurements), 0)
+      + Math.max(0, headings.length - 1) * 20
+    const figureHeight = figures.reduce((total, block) => total + blockHeight(block, measurements), 0)
+      + Math.max(0, figures.length - 1) * 12
+    const proseHeight = prose.reduce((total, block) => total + blockHeight(block, measurements), 0)
+      + Math.max(0, prose.length - 1) * 12
+    return headingHeight + (headings.length ? 20 : 0) + Math.max(figureHeight, proseHeight)
+  }
   return blocks.reduce((total, block) => total + blockHeight(block, measurements), 0) + Math.max(0, blocks.length - 1) * 20
 }
 
@@ -127,6 +161,7 @@ export function chooseLayout(blocks: PresentationBlock[]): SceneLayout {
   if (blocks.some((block) => block.layoutHint === 'statement') || (blocks.length === 1 && blocks[0].type === 'blockquote')) {
     return 'statement'
   }
+  if (blocks.some((block) => block.type === 'figure' && block.layoutHint === 'legend')) return 'legend'
   const figures = blocks.filter((block) => block.type === 'figure' && !block.imageOptions?.background)
   const text = blocks.filter((block) => block.type !== 'figure' && block.type !== 'heading')
   if (figures.some((block) => block.layoutHint === 'hero') || (figures.length && text.length <= 1)) return 'media-dominant'
@@ -152,15 +187,20 @@ function evaluate(
   capacity: number,
   density: Density,
   previousEnds: Set<string>,
+  nextBlock?: PresentationBlock,
 ): { total: number; breakdown: ScoreBreakdown; fillRatio: number; invalid: boolean } {
   const fillRatio = used / capacity
   const target = DENSITY_TARGETS[density].target
   const last = blocks[blocks.length - 1]
   const nextExists = endIndex < regionLength
   const densityDistance = Math.abs(fillRatio - target)
-  const overflow = fillRatio > DENSITY_TARGETS[density].maximum
+  const overflow = fillRatio > 1
   const orphan = nextExists && last.type === 'heading'
-  const keepViolation = nextExists && (last.keepWithNext || last.breakAfter === 'never')
+  const keepViolation = nextExists && (
+    last.keepWithNext
+    || last.breakAfter === 'never'
+    || Boolean(nextBlock?.keepWithPrevious && !nextBlock.continuation)
+  )
   const breakdown: ScoreBreakdown = {
     semanticCoherence: keepViolation ? -90 : 34,
     density: Math.round(50 - densityDistance * 95),
@@ -257,7 +297,7 @@ export function planScenes(
   const previousEnds = new Set(previousPlan?.scenes.map((scene) => scene.endBlockId) ?? [])
 
   for (const region of regions) {
-    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements), capacity))
+    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements), capacity, measurements))
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
     const regionUsed = usedHeight(plannedBlocks, measurements)
     if (regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
@@ -274,7 +314,7 @@ export function planScenes(
         const candidateBlocks = plannedBlocks.slice(cursor, end)
         const used = usedHeight(candidateBlocks, measurements)
         candidates.push({
-          ...evaluate(candidateBlocks, end, plannedBlocks.length, used, capacity, density, previousEnds),
+          ...evaluate(candidateBlocks, end, plannedBlocks.length, used, capacity, density, previousEnds, plannedBlocks[end]),
           blocks: candidateBlocks,
           end,
           used,

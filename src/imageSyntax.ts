@@ -1,10 +1,12 @@
 export type ImageFit = 'cover' | 'contain' | 'auto'
 export type ImageSide = 'none' | 'left' | 'right'
+export type ImageLayout = 'auto' | 'legend' | 'hero'
 
 export interface MarpitImageOptions {
   alt: string
   background: boolean
   fit: ImageFit
+  layout: ImageLayout
   side: ImageSide
   splitSize: string
   width: string
@@ -21,6 +23,7 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
     alt: '',
     background: false,
     fit: 'contain',
+    layout: 'legend',
     side: 'none',
     splitSize: '50%',
     width: '',
@@ -34,6 +37,9 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
   for (const token of source.trim().split(/\s+/).filter(Boolean)) {
     const lower = token.toLowerCase()
     if (lower === 'bg') options.background = true
+    else if (lower === 'legend' || lower === 'lenged' || lower === 'layout:legend') options.layout = 'legend'
+    else if (lower === 'hero' || lower === 'layout:hero') options.layout = 'hero'
+    else if (lower === 'layout:auto') options.layout = 'auto'
     // Keep accepting Marpit's `cover` token for source compatibility, but
     // SceneMD never crops document images. All image scaling is proportional.
     else if (lower === 'cover') options.fit = 'contain'
@@ -64,6 +70,7 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
 
 export function formatMarpitImageAlt(options: MarpitImageOptions): string {
   const tokens: string[] = []
+  if (options.layout !== 'legend') tokens.push(`layout:${options.layout}`)
   if (options.background) tokens.push('bg')
   if (options.background && options.side !== 'none') tokens.push(`${options.side}:${options.splitSize || '50%'}`)
   if (options.background) tokens.push('contain')

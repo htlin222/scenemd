@@ -187,8 +187,7 @@
 .scene li:nth-child(n + 7) { --delay: 0.35s; }
 .scene li:nth-child(n + 8) { --delay: 0.4s; }
 .scene .list-marker { color: var(--template-teal); font-family: inherit; font-weight: 400; }
-.scene [data-semantic-role='reference'] { gap: 0.55cqw; }
-.scene [data-semantic-role='reference'] li { font-size: max(20px, 1.6cqw); line-height: 1.32; }
+.scene [data-semantic-role='reference'] { gap: 0.5cqw; }
 .scene li strong { padding: 0.05em 0.3em; color: var(--template-teal); border-radius: 4px; background: #e5e7eb; }
 :root[data-theme='dark'] .scene li strong { background: #353b36; }
 .scene li.is-hidden-step { opacity: 0; transform: translateY(8px); }
@@ -317,9 +316,29 @@
 /* Content composition. */
 .text-media-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr); gap: 4cqw; align-items: start; min-width: 0; min-height: 0; }
 .media-dominant-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.45fr); gap: 3.5cqw; align-items: start; min-width: 0; min-height: 0; }
+.legend-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 3.25cqw;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+}
+.legend-media,
+.legend-copy { min-width: 0; min-height: 0; }
+.legend-media { display: flex; align-items: center; justify-content: center; }
+.legend-media .block-figure { width: 100%; }
+.legend-media .figure-frame { height: var(--figure-height, 31cqw); max-height: 32cqw; aspect-ratio: auto; background: transparent; }
+.legend-media figcaption { display: none; }
+.legend-copy { display: flex; flex-direction: column; justify-content: center; gap: 1.05cqw; }
+.legend-copy > p { margin: 0; }
+.legend-caption { margin-top: 0.55cqw; padding-top: 0.8cqw; color: var(--template-muted); border-top: 1px solid var(--template-line); }
+.legend-caption p { margin: 0; color: inherit; font-size: 1.25cqw; line-height: 1.35; }
 .media-column { min-width: 0; }
 .scene figure { margin: 0; }
-.figure-frame { position: relative; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 0; background: #f1f2f1; }
+.figure-frame { position: relative; width: 100%; height: var(--figure-height, auto); max-height: 32cqw; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 0; background: #f1f2f1; }
 .figure-frame::after { content: none; }
 .scene figure img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .figure-index { display: none; }
@@ -403,6 +422,8 @@
 .measurement-root ul,
 .measurement-root ol { margin: 0; padding: 0; list-style: none; }
 .measurement-root li { margin: 8px 0; }
+.measurement-root .block-list[data-semantic-role='reference'] { display: grid; gap: 7px; }
+.measurement-root .block-list[data-semantic-role='reference'] li { margin: 0; font-size: 13px; line-height: 1.28; }
 .measurement-root .figure-frame { height: 240px; }
 .measurement-root .block-code pre { white-space: pre-wrap; }
 .measurement-root blockquote { font: 700 20px/1.35 'Source Sans 3', 'Source Sans Pro', sans-serif; }
@@ -437,8 +458,9 @@
 /* Fullscreen text never falls below the requested 20px floor. Preview text
  * scales with the stage, exactly like the 960 × 540 reference screenshots. */
 .presentation-overlay .scene p,
-.presentation-overlay .scene li,
+.presentation-overlay .scene .block-list:not([data-semantic-role='reference']) li,
 .presentation-overlay .block-table table { font-size: max(20px, 2.083cqw); }
+.presentation-overlay .scene .block-list[data-semantic-role='reference'] li { font-size: max(13px, 1.35cqw); }
 
 @media (prefers-reduced-motion: reduce) {
   .scene *,

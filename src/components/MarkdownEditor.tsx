@@ -755,7 +755,13 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const current = imageTool
     const view = viewRef.current
     if (!current || !view) return
-    const nextOptions = { ...current.options, ...patch, height: '', fit: 'contain' as const }
+    const nextOptions = { ...current.options, ...patch }
+    if (nextOptions.fit === 'cover') nextOptions.fit = 'contain'
+    if (patch.layout === 'legend') {
+      nextOptions.background = false
+      nextOptions.side = 'none'
+    }
+    if (patch.background === true) nextOptions.layout = 'auto'
     const nextUrl = patch.url ?? current.url
     const syntax = `![${formatMarpitImageAlt(nextOptions)}](${nextUrl})`
     view.dispatch({
@@ -987,12 +993,14 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       </div>}
       {imageTool && <aside className="image-syntax-popover" style={{ left: imageTool.left, top: imageTool.top }} onMouseDown={(event) => event.stopPropagation()} aria-label="Image options">
         <header><div><Image size={16} /><strong>Image</strong><span>Marpit syntax</span></div><button onClick={() => { setImageTool(null); viewRef.current?.focus() }} aria-label="Close image options"><X size={15} /></button></header>
-        <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: 'contain', filter: imageFilterCss(imageTool.options.filters) }} /></div>
+        <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: imageTool.options.fit === 'auto' ? 'scale-down' : 'contain', filter: imageFilterCss(imageTool.options.filters) }} /></div>
         <div className="image-syntax-fields">
           <label className="image-field-wide"><span>Image URL</span><input value={imageTool.url} onChange={(event) => updateImageSyntax({ url: event.target.value })} /></label>
           <label className="image-field-wide"><span>Alt text</span><input value={imageTool.options.alt} onChange={(event) => updateImageSyntax({ alt: event.target.value })} placeholder="Describe this image" /></label>
           <label><span>Width</span><input value={imageTool.options.width} onChange={(event) => updateImageSyntax({ width: event.target.value })} placeholder="e.g. 480px" /></label>
-          <label><span>Scaling</span><input value="Proportional · contain" readOnly aria-label="Image scaling mode" /></label>
+          <label><span>Height</span><input value={imageTool.options.height} onChange={(event) => updateImageSyntax({ height: event.target.value })} placeholder="e.g. 280px" /></label>
+          <label><span>Scaling</span><select value={imageTool.options.fit} onChange={(event) => updateImageSyntax({ fit: event.target.value as MarpitImageOptions['fit'] })}><option value="contain">Fit · no crop</option><option value="auto">Natural size</option></select></label>
+          <label><span>Layout</span><select value={imageTool.options.layout} onChange={(event) => updateImageSyntax({ layout: event.target.value as MarpitImageOptions['layout'] })}><option value="legend">Image left · legend right</option><option value="auto">Automatic flow</option><option value="hero">Hero image</option></select></label>
           <label><span>Background side</span><select value={imageTool.options.side} disabled={!imageTool.options.background} onChange={(event) => updateImageSyntax({ side: event.target.value as MarpitImageOptions['side'] })}><option value="none">Full</option><option value="left">Left</option><option value="right">Right</option></select></label>
           <label className="image-field-check"><input type="checkbox" checked={imageTool.options.background} onChange={(event) => updateImageSyntax({ background: event.target.checked })} /><span>Scene background</span></label>
           <label><span>Split size</span><input disabled={!imageTool.options.background || imageTool.options.side === 'none'} value={imageTool.options.splitSize} onChange={(event) => updateImageSyntax({ splitSize: event.target.value })} placeholder="50%" /></label>

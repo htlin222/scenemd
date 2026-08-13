@@ -161,7 +161,7 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
     return (
       <Tag {...common} {...(Tag === 'ol' ? { start: block.listStart ?? 1 } : {})}>
         {block.listItems?.map((item, index) => (
-          <li key={index} id={block.semanticRole === 'reference' ? `reference-${(block.listStart ?? 1) + index}` : undefined} className={index < visibleCount ? 'is-revealed' : 'is-hidden-step'}>
+          <li key={index} data-measure-item-id={`${block.id}:item:${index}`} id={block.semanticRole === 'reference' ? `reference-${(block.listStart ?? 1) + index}` : undefined} className={index < visibleCount ? 'is-revealed' : 'is-hidden-step'}>
             <span className="list-marker">{block.ordered ? `${(block.listStart ?? 1) + index}.` : '•'}</span>
             <span><InlineContent nodes={item} /></span>
           </li>
@@ -172,13 +172,15 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
   if (block.type === 'figure') {
     const imageStyle: CSSProperties = {
       width: block.imageOptions?.width || undefined,
-      height: block.imageOptions?.height || undefined,
       filter: imageFilterCss(block.imageOptions?.filters ?? ''),
-      objectFit: 'contain',
+      objectFit: block.imageOptions?.fit === 'auto' ? 'scale-down' : 'contain',
     }
+    const frameStyle = block.imageOptions?.height
+      ? { '--figure-height': block.imageOptions.height } as CSSProperties
+      : undefined
     return (
       <figure {...common} data-layout-hint={block.layoutHint} data-background={block.imageOptions?.background || undefined}>
-        <div className="figure-frame">
+        <div className="figure-frame" style={frameStyle}>
           <img src={block.url} alt={block.alt ?? ''} style={imageStyle} />
           <span className="figure-index" aria-hidden="true">FIG.</span>
         </div>
@@ -268,7 +270,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
   const heading = scene.blocks.find((block) => block.type === 'heading')
   const content = scene.blocks.filter((block) => block !== heading)
   const figures = content.filter((block) => block.type === 'figure')
-  const backgroundFigure = figures.find((block) => block.imageOptions?.background)
+  const backgroundFigure = figures.find((block) => block.imageOptions?.background && block.layoutHint !== 'legend')
   const visibleFigures = figures.filter((block) => block !== backgroundFigure)
   const prose = content.filter((block) => block.type !== 'figure')
   const sceneReferences = sceneCitationNumbers(scene)
@@ -343,7 +345,17 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
         {scene.continuationLabel && <div className="continuation-label">{scene.continuationLabel}</div>}
         {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
-        {scene.layout === 'text-media' ? (
+        {scene.layout === 'legend' ? (
+          <div className="legend-grid">
+            <div className="legend-media">{renderBlocks(visibleFigures)}</div>
+            <div className="legend-copy">
+              {renderBlocks(prose)}
+              {visibleFigures.some((figure) => figure.caption?.length || figure.alt) && <div className="legend-caption">
+                {visibleFigures.map((figure) => (figure.caption?.length || figure.alt) && <p key={`${figure.id}-caption`}><InlineContent nodes={figure.caption?.length ? figure.caption : [{ type: 'text', value: figure.alt ?? '' }]} /></p>)}
+              </div>}
+            </div>
+          </div>
+        ) : scene.layout === 'text-media' ? (
           <div className="text-media-grid">
             <div className="prose-column">{renderBlocks(prose)}</div>
             <div className="media-column">{renderBlocks(visibleFigures)}</div>

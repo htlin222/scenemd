@@ -197,6 +197,20 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     }))
   }
 
+  if (resource === 'ai' && id === 'transcript' && context.request.method === 'POST') {
+    const body = await context.request.json<{ previous?: string; current?: string; next?: string; mode?: 'verbatim' | 'tldr'; documentId?: string }>()
+    const current = body.current?.trim() ?? ''
+    const contextLength = (body.previous?.length ?? 0) + current.length + (body.next?.length ?? 0)
+    if (!current || contextLength > 18000) return json({ error: 'The three-scene context must contain between 1 and 18,000 characters' }, 400)
+    const coordinatorId = body.documentId?.replace(/[^a-zA-Z0-9-]/g, '') || 'editor-assistant'
+    const stub = documentStub(context.env, coordinatorId)
+    return stub.fetch(new Request('https://document.internal/ai/transcript', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ previous: body.previous, current, next: body.next, mode: body.mode }),
+    }))
+  }
+
   if (resource === 'citations' && context.request.method === 'GET') {
     const doi = normalizeDoi(url.searchParams.get('doi') ?? '')
     const pmid = normalizePmid(url.searchParams.get('pmid') ?? '')

@@ -15,6 +15,7 @@ import {
   Focus,
   GripVertical,
   Link2,
+  LoaderCircle,
   MessageCircleQuestionMark,
   Mic2,
   Moon,
@@ -27,6 +28,7 @@ import {
   Share2,
   SquareLibrary,
   Sun,
+  Sparkles,
   X,
 } from 'lucide-react'
 import { buildCitationReferenceMap, SceneView, BlockView, sceneSpeakerNotes } from './components/SceneView'
@@ -39,7 +41,7 @@ import { PresenterWindow } from './components/PresenterWindow'
 import { PresentationRuntimeTools } from './components/PresentationRuntimeTools'
 import { buildSemanticRegions, parsePresentationDocument } from './engine/semantics'
 import { planScenes, withPresentationCover } from './engine/planner'
-import type { Density, PresentationConfig, ScenePlan, ThemeMode } from './engine/types'
+import type { Density, PresentationBlock, PresentationConfig, Scene, ScenePlan, SourceRange, ThemeMode } from './engine/types'
 import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
 import { normalizeMarkdownUrls } from './lib/openevidence'
 
@@ -128,8 +130,6 @@ const EMPTY_PLAN: ScenePlan = { scenes: [], averageFill: 0, overflowCount: 0, me
 
 type Route = { kind: 'home' } | { kind: 'document'; id: string } | { kind: 'share'; token: string }
 type SaveStatus = 'saved' | 'saving' | 'conflict' | 'offline'
-type HeaderLayout = 'wide' | 'medium' | 'compact'
-
 interface HeaderActionSpec {
   id: string
   label: string
@@ -140,10 +140,15 @@ interface HeaderActionSpec {
   busy?: boolean
 }
 
-function headerLayoutForWidth(width: number): HeaderLayout {
-  if (width >= 1540) return 'wide'
-  if (width >= 1040) return 'medium'
-  return 'compact'
+function directHeaderActionCount(width: number): number {
+  if (width >= 1530) return 7
+  if (width >= 1430) return 6
+  if (width >= 1330) return 5
+  if (width >= 1230) return 4
+  if (width >= 1130) return 3
+  if (width >= 1030) return 2
+  if (width >= 930) return 1
+  return 0
 }
 
 interface DocumentSummary {
@@ -209,6 +214,45 @@ function blockRevealSteps(block: import('./engine/types').PresentationBlock): nu
   return listSteps + codeSteps + groupSteps + columnSteps
 }
 
+function sourceOffset(markdown: string, range: Pick<SourceRange, 'startLine' | 'startColumn'>): number {
+  const lines = markdown.split('\n')
+  let offset = 0
+  for (let line = 1; line < range.startLine; line += 1) offset += (lines[line - 1]?.length ?? 0) + 1
+  return Math.min(markdown.length, offset + Math.max(0, range.startColumn - 1))
+}
+
+function updateSceneSpeakerNote(markdown: string, scene: Scene | undefined, value: string): string {
+  if (!scene || scene.role === 'cover') return markdown
+  const note = value.trim().replaceAll('-->', '--\u200b>')
+  const ranges = scene.blocks.flatMap((block) => block.speakerNoteRanges ?? [])
+    .sort((a, b) => a.startLine - b.startLine || a.startColumn - b.startColumn)
+  if (ranges.length) {
+    const primary = ranges[0]
+    return [...ranges].reverse().reduce((source, range) => {
+      const from = sourceOffset(source, range)
+      const to = sourceOffset(source, { startLine: range.endLine, startColumn: range.endColumn })
+      return `${source.slice(0, from)}${range === primary && note ? `<!-- ${note} -->` : ''}${source.slice(to)}`
+    }, markdown).replace(/\n{3,}/g, '\n\n')
+  }
+  if (!note) return markdown
+  const insertAt = sourceOffset(markdown, { startLine: scene.sourceRange.endLine, startColumn: scene.sourceRange.endColumn })
+  return `${markdown.slice(0, insertAt)}\n\n<!-- ${note} -->${markdown.slice(insertAt)}`
+}
+
+function blockTranscriptText(block: PresentationBlock): string {
+  const inlineText = (nodes: PresentationBlock['inlines'] = []): string => nodes.map((node) => 'value' in node ? node.value : 'children' in node ? inlineText(node.children) : '\n').join('')
+  if (block.type === 'figure') return `[Image: ${block.alt ?? ''}]`
+  if (block.type === 'list') return (block.listItems ?? []).map((item) => `- ${inlineText(item)}`).join('\n')
+  if (block.type === 'table') return (block.tableRows ?? []).map((row) => row.join(' | ')).join('\n')
+  if (block.type === 'code' || block.type === 'math') return block.value ?? ''
+  return inlineText(block.inlines)
+}
+
+function sceneTranscriptText(scene: Scene | undefined): string {
+  if (!scene || scene.role === 'cover') return ''
+  return scene.blocks.map(blockTranscriptText).filter(Boolean).join('\n\n')
+}
+
 function App() {
   const [route, setRoute] = useState<Route>(parseRoute)
   const [documents, setDocuments] = useState<DocumentSummary[]>([])
@@ -237,7 +281,7 @@ function App() {
   const [showPresentationSettings, setShowPresentationSettings] = useState(false)
   const [showHackMDSync, setShowHackMDSync] = useState(false)
   const [hackMDSyncing, setHackMDSyncing] = useState(false)
-  const [headerLayout, setHeaderLayout] = useState<HeaderLayout>(() => headerLayoutForWidth(window.innerWidth))
+  const [directHeaderCount, setDirectHeaderCount] = useState(() => directHeaderActionCount(window.innerWidth))
   const [headerOverflowOpen, setHeaderOverflowOpen] = useState(false)
   const [presenting, setPresenting] = useState(false)
   const [presenterWindow, setPresenterWindow] = useState<Window | null>(null)
@@ -245,6 +289,10 @@ function App() {
     const saved = Number(localStorage.getItem('scenemd-preview-notes-height'))
     return Number.isFinite(saved) && saved >= 90 && saved <= 320 ? saved : 150
   })
+  const [noteDraft, setNoteDraft] = useState('')
+  const [transcriptMode, setTranscriptMode] = useState<'verbatim' | 'tldr'>('verbatim')
+  const [transcriptBusy, setTranscriptBusy] = useState(false)
+  const [transcriptError, setTranscriptError] = useState<string | null>(null)
   const [showShortcutHint, setShowShortcutHint] = useState(false)
   const [sceneIndex, setSceneIndex] = useState(0)
   const [revealIndex, setRevealIndex] = useState(0)
@@ -270,6 +318,7 @@ function App() {
     ),
     [regions, measurements, viewport.height, density, presenting, presentationConfig],
   )
+  const activeDocumentId = route.kind === 'document' ? route.id : 'readonly'
   const citationReferences = useMemo(() => buildCitationReferenceMap(plan.scenes), [plan.scenes])
   const filteredDocuments = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase()
@@ -294,7 +343,7 @@ function App() {
     let frame = 0
     const update = () => {
       window.cancelAnimationFrame(frame)
-      frame = window.requestAnimationFrame(() => setHeaderLayout(headerLayoutForWidth(window.innerWidth)))
+      frame = window.requestAnimationFrame(() => setDirectHeaderCount(directHeaderActionCount(window.innerWidth)))
     }
     window.addEventListener('resize', update, { passive: true })
     return () => {
@@ -305,7 +354,7 @@ function App() {
 
   useEffect(() => {
     setHeaderOverflowOpen(false)
-  }, [headerLayout, route.kind])
+  }, [directHeaderCount, route.kind])
 
   useEffect(() => {
     if (!headerOverflowOpen) return
@@ -467,8 +516,8 @@ function App() {
     setMeasuring(true)
     const frame = window.requestAnimationFrame(() => {
       const next = new Map<string, number>()
-      measureRef.current?.querySelectorAll<HTMLElement>('[data-measure-id]').forEach((element) => {
-        const id = element.dataset.measureId
+      measureRef.current?.querySelectorAll<HTMLElement>('[data-measure-id], [data-measure-item-id]').forEach((element) => {
+        const id = element.dataset.measureId ?? element.dataset.measureItemId
         if (id) next.set(id, element.getBoundingClientRect().height)
       })
       setMeasurements(next)
@@ -479,6 +528,7 @@ function App() {
 
   const currentScene = plan.scenes[sceneIndex]
   const currentSpeakerNotes = useMemo(() => sceneSpeakerNotes(currentScene), [currentScene])
+  const currentSpeakerNoteText = currentSpeakerNotes.join('\n\n')
   const stepCount = currentScene?.blocks.reduce((total, block) => total + blockRevealSteps(block), 0) ?? 0
   const navigationLabels = useMemo(() => [...new Set(regions
     .filter((region) => region.blocks[0]?.type === 'heading' && region.blocks[0].depth === 1)
@@ -486,6 +536,42 @@ function App() {
     .filter((label): label is string => Boolean(label)))], [regions])
   const activeNavigationLabel = regions.find((region) => region.id === currentScene?.regionId)?.headingPath[0]
   const sceneNavigationLabels = useMemo(() => plan.scenes.map((scene) => regions.find((region) => region.id === scene.regionId)?.headingPath[0]), [plan.scenes, regions])
+
+  useEffect(() => {
+    setNoteDraft(currentSpeakerNoteText)
+    setTranscriptError(null)
+  }, [currentScene?.id, currentSpeakerNoteText])
+
+  const changeSpeakerNote = useCallback((value: string) => {
+    setNoteDraft(value)
+    setMarkdown((source) => updateSceneSpeakerNote(source, currentScene, value))
+  }, [currentScene])
+
+  const generateTranscript = useCallback(async () => {
+    if (!currentScene || currentScene.role === 'cover' || transcriptBusy) return
+    setTranscriptBusy(true)
+    setTranscriptError(null)
+    try {
+      const response = await fetch('/api/ai/transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          documentId: activeDocumentId,
+          mode: transcriptMode,
+          previous: sceneTranscriptText(plan.scenes[sceneIndex - 1]),
+          current: sceneTranscriptText(currentScene),
+          next: sceneTranscriptText(plan.scenes[sceneIndex + 1]),
+        }),
+      })
+      const result = await response.json() as { note?: string; error?: string }
+      if (!response.ok || !result.note) throw new Error(result.error || '無法生成逐字稿')
+      changeSpeakerNote(result.note)
+    } catch (error) {
+      setTranscriptError(error instanceof Error ? error.message : '無法生成逐字稿')
+    } finally {
+      setTranscriptBusy(false)
+    }
+  }, [activeDocumentId, changeSpeakerNote, currentScene, plan.scenes, sceneIndex, transcriptBusy, transcriptMode])
 
   const navigateToLabel = useCallback((label: string) => {
     const region = regions.find((candidate) => candidate.blocks[0]?.type === 'heading' && candidate.blocks[0].depth === 1 && candidate.headingPath[0] === label)
@@ -645,7 +731,6 @@ function App() {
 
   const saveLabel = saveStatus === 'saving' ? 'Saving…' : saveStatus === 'conflict' ? 'Edit conflict' : saveStatus === 'offline' ? 'Save failed' : 'Saved'
   const isReadOnlyShare = route.kind === 'share'
-  const activeDocumentId = route.kind === 'document' ? route.id : 'readonly'
   const documentHeaderActions: HeaderActionSpec[] = isReadOnlyShare ? [] : [
     { id: 'design', label: 'Design', ariaLabel: 'Open presentation design settings', icon: <Palette size={16} />, onClick: () => setShowPresentationSettings(true) },
     { id: 'hackmd', label: 'HackMD', ariaLabel: 'Sync document with HackMD', icon: <RefreshCw className={`sync-rotation-icon${hackMDSyncing ? ' is-spinning' : ''}`} size={16} />, onClick: () => setShowHackMDSync(true), busy: hackMDSyncing },
@@ -655,12 +740,11 @@ function App() {
     { id: 'cheatsheet', label: 'Cheat sheet', ariaLabel: 'Open Markdown and presentation cheat sheet', icon: <BookOpen size={16} />, onClick: () => setShowCheatsheet(true) },
     { id: 'share', label: shareBusy ? 'Sharing…' : 'Share', ariaLabel: 'Create read-only share link', icon: <Share2 size={16} />, onClick: () => { void createShareLink() }, disabled: shareBusy },
   ]
-  const directActionIds = headerLayout === 'wide'
-    ? new Set(documentHeaderActions.map((action) => action.id))
-    : headerLayout === 'medium' ? new Set(['design', 'export']) : new Set<string>()
+  const headerActionPriority = ['design', 'export', 'hackmd', 'library', 'prompt', 'cheatsheet', 'share']
+  const directActionIds = new Set(headerActionPriority.slice(0, directHeaderCount))
   const directHeaderActions = documentHeaderActions.filter((action) => directActionIds.has(action.id))
   const overflowHeaderActions = documentHeaderActions.filter((action) => !directActionIds.has(action.id))
-  const themeInOverflow = headerLayout === 'compact' && !isReadOnlyShare
+  const themeInOverflow = directHeaderCount === 0 && !isReadOnlyShare
   const hasHeaderOverflow = !isReadOnlyShare && (themeInOverflow || overflowHeaderActions.length > 0)
   const renderDocumentHeaderAction = (action: HeaderActionSpec, inOverflow = false) => (
     <button
@@ -749,17 +833,18 @@ function App() {
             <div className="preview-area" style={{ '--notes-height': `${notesHeight}px` } as React.CSSProperties}>
               <div className="preview-meta"><span>{plan.scenes.length} semantic scenes</span><span>{Math.round(plan.averageFill * 100)}% avg fill</span><span>{plan.overflowCount === 0 ? <><Check size={12} /> no overflow</> : `${plan.overflowCount} overflow`}</span></div>
               <div className={`stage-shell ${viewport.width < 560 ? 'is-narrow' : ''}`} ref={previewRef}>{currentScene ? <SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={stepCount} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /> : <div className="empty-state">Start writing to compose your first scene.</div>}</div>
-              <button className="preview-notes-resize" onPointerDown={beginNotesResize} aria-label="Resize speaker notes"><span /></button>
-              <section className="preview-speaker-notes" style={{ height: notesHeight }} aria-label="Speaker notes for current scene">
-                <header><span>Speaker notes</span><small>Marp comments · <kbd>S</kbd> presenter</small></header>
-                <div>{currentSpeakerNotes.length ? currentSpeakerNotes.map((note, index) => <p key={index}>{note}</p>) : <p className="is-empty">Add an HTML comment after scene content to create a speaker note.</p>}</div>
-              </section>
               <div className="scene-nav">
                 <button className="icon-button" onClick={goPrevious} disabled={sceneIndex === 0} aria-label="Previous scene"><ArrowLeft size={16} /></button>
                 <div className="scene-dots" aria-label={`Scene ${sceneIndex + 1} of ${plan.scenes.length}`}>{plan.scenes.map((scene, index) => <button key={scene.id} className={index === sceneIndex ? 'is-active' : ''} onClick={() => { setSceneIndex(index); setRevealIndex(0) }} aria-label={`Go to scene ${index + 1}`} />)}</div>
                 <span className="scene-count"><strong>{String(sceneIndex + 1).padStart(2, '0')}</strong> / {String(plan.scenes.length).padStart(2, '0')}</span>
                 <button className="icon-button" onClick={goNext} disabled={sceneIndex >= plan.scenes.length - 1} aria-label="Next scene"><ArrowRight size={16} /></button>
               </div>
+              <button className="preview-notes-resize" onPointerDown={beginNotesResize} aria-label="Resize speaker notes"><span /></button>
+              <section className="preview-speaker-notes" style={{ height: notesHeight }} aria-label="Speaker notes for current scene">
+                <header><span>Speaker notes</span><div className="speaker-note-actions"><select value={transcriptMode} onChange={(event) => setTranscriptMode(event.target.value as 'verbatim' | 'tldr')} aria-label="Transcript detail"><option value="verbatim">1:1 逐字稿</option><option value="tldr">TL;DR</option></select><button onClick={() => void generateTranscript()} disabled={transcriptBusy || currentScene?.role === 'cover'}>{transcriptBusy ? <LoaderCircle className="is-spinning" size={14} /> : <Sparkles size={14} />}生成逐字稿</button></div></header>
+                <textarea value={noteDraft} onChange={(event) => changeSpeakerNote(event.target.value)} disabled={!currentScene || currentScene.role === 'cover'} placeholder={currentScene?.role === 'cover' ? 'Cover scene has no speaker note.' : 'Type speaker notes here. They sync to a Marp-compatible HTML comment in Markdown.'} aria-label="Edit speaker notes" />
+                {transcriptError && <small className="speaker-note-error">{transcriptError}</small>}
+              </section>
             </div>
           </section>}
         </main>

@@ -86,6 +86,10 @@ function cleanBulletMarkdown(value: string): string {
   return lines.map((line) => /^[-*+]\s+/.test(line) ? `- ${line.replace(/^[-*+]\s+/, '')}` : `- ${line.replace(/^\d+[.)]\s+/, '')}`).join('\n')
 }
 
+function cleanGeneratedNote(value: string): string {
+  return value.trim().replace(/^```(?:markdown|md|text)?\s*/i, '').replace(/\s*```$/i, '').trim()
+}
+
 function hackmdNoteId(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return ''
@@ -152,6 +156,33 @@ export class DocumentRoom extends DurableObject<Env> {
         return markdown ? json({ markdown }) : json({ error: 'The model returned no bullets' }, 502)
       } catch {
         return json({ error: 'Workers AI could not transform this selection' }, 502)
+      }
+    }
+
+    if (url.pathname === '/ai/transcript' && request.method === 'POST') {
+      const body = await request.json<{ previous?: string; current?: string; next?: string; mode?: 'verbatim' | 'tldr' }>()
+      const current = body.current?.trim() ?? ''
+      const contextLength = (body.previous?.length ?? 0) + current.length + (body.next?.length ?? 0)
+      if (!current || contextLength > 18000) return json({ error: 'The three-scene context must contain between 1 and 18,000 characters' }, 400)
+      const concise = body.mode === 'tldr'
+      try {
+        const result = await this.env.AI.run('@cf/meta/llama-3.1-8b-instruct-fast', {
+          messages: [
+            {
+              role: 'system',
+              content: concise
+                ? 'Write concise speaker notes for the CURRENT presentation scene. Use the previous and next scenes only for transitions and continuity. Preserve the source language, facts, numbers, uncertainty, and citations; add no new claims. Produce a short TL;DR speaking script of about 30–60 seconds. Return only the spoken script as plain text, with no heading, bullets, Markdown fence, or stage directions.'
+                : 'Write a natural 1:1 speaker transcript for the CURRENT presentation scene. Use the previous and next scenes only to create a smooth transition and avoid repetition. Cover every audience-facing point in the current scene, preserving the source language, facts, numbers, uncertainty, and citations; add no new claims. Write what the presenter can say aloud, not a summary or outline. Return only the spoken script as plain text, with no heading, bullets, Markdown fence, or stage directions.',
+            },
+            { role: 'user', content: `PREVIOUS SCENE\n${body.previous?.trim() || '(none)'}\n\nCURRENT SCENE\n${current}\n\nNEXT SCENE\n${body.next?.trim() || '(none)'}` },
+          ],
+          temperature: 0.15,
+          max_tokens: concise ? 480 : 1400,
+        }) as { response?: string }
+        const note = cleanGeneratedNote(result.response ?? '')
+        return note ? json({ note }) : json({ error: 'The model returned no transcript' }, 502)
+      } catch {
+        return json({ error: 'Workers AI could not generate the transcript' }, 502)
       }
     }
 

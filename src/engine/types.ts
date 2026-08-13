@@ -61,7 +61,7 @@ export interface PresentationBlock {
   breakBefore: 'never' | 'avoid' | 'auto' | 'prefer' | 'always'
   breakAfter: 'never' | 'avoid' | 'auto' | 'prefer' | 'always'
   visibility: 'normal' | 'hidden' | 'presentation-only'
-  layoutHint?: 'auto' | 'hero' | 'media' | 'statement'
+  layoutHint?: 'auto' | 'hero' | 'media' | 'legend' | 'statement'
   sourceRange: SourceRange
   inlines?: InlineNode[]
   depth?: number
@@ -84,6 +84,7 @@ export interface PresentationBlock {
   columns?: PresentationBlock[][]
   estimatedHeight?: number
   speakerNotes?: string[]
+  speakerNoteRanges?: SourceRange[]
   stepped?: boolean
 }
 
@@ -97,7 +98,7 @@ export interface SemanticRegion {
   explicitBreakAfter: boolean
 }
 
-export type SceneLayout = 'title' | 'chapter' | 'text' | 'text-media' | 'media-dominant' | 'statement'
+export type SceneLayout = 'title' | 'chapter' | 'text' | 'text-media' | 'media-dominant' | 'legend' | 'statement'
 export type SceneRole = 'cover' | 'chapter' | 'content'
 
 export interface ScoreBreakdown {

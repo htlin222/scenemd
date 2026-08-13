@@ -254,19 +254,13 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
     // Preserve inline semantics inside list items (including numeric citation
     // links) instead of flattening the item back to plain text.
     const items = (node.children ?? []).map((item) => inlineOf(item.children ?? []))
-    const chunks: PresentationBlock[] = []
-    for (let offset = 0; offset < items.length; offset += 6) {
-      const block = baseBlock(node, index + offset, 'list')
-      block.listItems = items.slice(offset, offset + 6)
-      block.ordered = node.ordered ?? false
-      block.listStart = (node.start ?? 1) + offset
-      block.continuation = offset > 0
-      block.keepTogether = true
-      block.importance = 0.6
-      if (offset > 0) block.keepWithPrevious = true
-      chunks.push(block)
-    }
-    return chunks
+    const block = baseBlock(node, index, 'list')
+    block.listItems = items
+    block.ordered = node.ordered ?? false
+    block.listStart = node.start ?? 1
+    block.keepTogether = true
+    block.importance = 0.6
+    return [block]
   }
 
   if (node.type === 'blockquote') {
@@ -324,7 +318,7 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
   let referencesDepth: number | null = null
   let activeColumns: PresentationBlock[][] | null = null
   let activeCodeGroup: PresentationBlock[] | null = null
-  let pendingSpeakerNotes: string[] = []
+  let pendingSpeakerNotes: Array<{ text: string; range: SourceRange }> = []
 
   const lastAuthoredBlock = () => activeColumns?.at(-1)?.at(-1) ?? blocks.at(-1)
 
@@ -375,8 +369,10 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       if (directive) directives = { ...directives, ...directive }
       else if (comment && !isMarpDirective(comment)) {
         const target = lastAuthoredBlock()
-        if (target) target.speakerNotes = [...(target.speakerNotes ?? []), comment]
-        else pendingSpeakerNotes.push(comment)
+        if (target) {
+          target.speakerNotes = [...(target.speakerNotes ?? []), comment]
+          target.speakerNoteRanges = [...(target.speakerNoteRanges ?? []), rangeOf(node)]
+        } else pendingSpeakerNotes.push({ text: comment, range: rangeOf(node) })
       }
       continue
     }
@@ -394,7 +390,8 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
     normalized.forEach((block, blockIndex) => {
       applyDirectives(block, blockIndex === 0 ? directives : {})
       if (blockIndex === 0 && pendingSpeakerNotes.length) {
-        block.speakerNotes = [...pendingSpeakerNotes]
+        block.speakerNotes = pendingSpeakerNotes.map((note) => note.text)
+        block.speakerNoteRanges = pendingSpeakerNotes.map((note) => note.range)
         pendingSpeakerNotes = []
       }
       if (referencesDepth !== null && block.type === 'list') block.semanticRole = 'reference'
@@ -409,6 +406,28 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
 
   finishColumns((tree.children ?? []).length)
   finishCodeGroup((tree.children ?? []).length)
+
+  // Images default to the presentation-friendly legend composition: image on
+  // the left and its nearby explanatory copy on the right. Keep that small
+  // semantic group together so pagination never strands the legend.
+  blocks.forEach((block, index) => {
+    if (block.type !== 'figure') return
+    block.layoutHint = block.imageOptions?.layout === 'hero' ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
+    if (block.layoutHint !== 'legend') return
+    const previous = blocks[index - 1]
+    if (previous?.type === 'paragraph') {
+      previous.keepWithNext = true
+      block.keepWithPrevious = true
+    }
+    let previousInGroup: PresentationBlock = block
+    for (let nextIndex = index + 1; nextIndex < Math.min(blocks.length, index + 4); nextIndex += 1) {
+      const next = blocks[nextIndex]
+      if (next.type !== 'paragraph') break
+      previousInGroup.keepWithNext = true
+      next.keepWithPrevious = true
+      previousInGroup = next
+    }
+  })
 
   return blocks
 }
