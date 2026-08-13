@@ -267,7 +267,7 @@
 .block-table table { width: 100%; border-collapse: collapse; table-layout: auto; color: var(--template-text); font-size: 2.083cqw; line-height: 1.3; }
 .block-table th,
 .block-table td { padding: 0.313cqw 0.833cqw; vertical-align: top; border: 0; border-bottom: 1px solid var(--template-line); overflow-wrap: anywhere; text-align: left; }
-.block-table th { border-bottom-width: 2px; font: 700 inherit; }
+.block-table th { border-bottom-width: 2px; font-family: inherit; font-size: inherit; font-weight: 700; line-height: inherit; }
 .block-table th:first-child,
 .block-table td:first-child { width: 1%; font-weight: 700; white-space: nowrap; }
 .block-table td:hover { background: #e5e7eb; }

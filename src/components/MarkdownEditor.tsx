@@ -309,8 +309,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           })
           const result = await response.json() as { url?: string; error?: string }
           if (!response.ok || !result.url) throw new Error(result.error || 'Image upload failed')
+          const imageUrl = new URL(result.url, window.location.origin).toString()
           const alt = (file.name || 'Pasted image').replace(/\.[^.]+$/, '').replace(/[\[\]]/g, '')
-          const markdownImage = `${insertAt > 0 ? '\n' : ''}![${alt}](${result.url})\n`
+          const markdownImage = `${insertAt > 0 ? '\n' : ''}![${alt}](${imageUrl})\n`
           const activeView = viewRef.current
           if (activeView === view) {
             const position = Math.min(insertAt, activeView.state.doc.length)
@@ -552,13 +553,13 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   return (
     <div className="markdown-composer">
       <div className="markdown-editor-topbar">
-        <div className="markdown-mode-tabs" role="tablist" aria-label="Markdown editor mode">
-          <button role="tab" aria-selected={mode === 'write'} className={mode === 'write' ? 'is-active' : ''} onClick={() => onModeChange('write')}><Pencil size={14} /> Write</button>
-          <button role="tab" aria-selected={mode === 'split'} className={mode === 'split' ? 'is-active' : ''} onClick={() => onModeChange('split')} aria-label="Split editor and rendered Markdown"><Columns2 size={14} /> Split</button>
-          <button role="tab" aria-selected={mode === 'preview'} className={mode === 'preview' ? 'is-active' : ''} onClick={() => onModeChange('preview')} aria-label="Preview rendered Markdown"><Eye size={14} /> Preview</button>
-        </div>
-        {mode !== 'preview' && (
-          <div className="markdown-toolbar" role="toolbar" aria-label="Markdown formatting">
+        <div className="markdown-toolbar" role="toolbar" aria-label="Editor modes and Markdown formatting">
+          <button className={`markdown-mode-button ${mode === 'write' ? 'is-active' : ''}`} aria-pressed={mode === 'write'} onClick={() => onModeChange('write')}><Pencil size={14} /><span>Write</span></button>
+          <button className={`markdown-mode-button ${mode === 'split' ? 'is-active' : ''}`} aria-pressed={mode === 'split'} onClick={() => onModeChange('split')} aria-label="Split editor and rendered Markdown"><Columns2 size={14} /><span>Split</span></button>
+          <button className={`markdown-mode-button ${mode === 'preview' ? 'is-active' : ''}`} aria-pressed={mode === 'preview'} onClick={() => onModeChange('preview')} aria-label="Preview rendered Markdown"><Eye size={14} /><span>Preview</span></button>
+          {mode !== 'preview' && <span className="markdown-toolbar-divider" aria-hidden="true" />}
+          {mode !== 'preview' && (
+            <>
             {tools.map(({ label, icon: Icon, action }) => (
               <button key={label} title={label} aria-label={label} onMouseDown={(event) => event.preventDefault()} onClick={() => viewRef.current && action(viewRef.current)}><Icon size={16} /></button>
             ))}
@@ -568,8 +569,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
               if (event.target.files?.length && viewRef.current) imageHandlerRef.current([...event.target.files], viewRef.current)
               event.target.value = ''
             }} />
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
       <div className={`markdown-editor-body is-${mode}`}>
         {mode !== 'preview' && <div className="codemirror-host" ref={hostRef} />}

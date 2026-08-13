@@ -125,7 +125,8 @@ export const onRequest: PagesFunction<Env> = async (context) => {
       httpMetadata: { contentType, cacheControl: 'public, max-age=31536000, immutable' },
       customMetadata: { uploadedBy: context.request.headers.get('Cf-Access-Authenticated-User-Email') ?? 'unknown' },
     })
-    return json({ url: `/api/images/${key}`, key }, 201)
+    const imageUrl = new URL(`/api/images/${key}`, context.request.url)
+    return json({ url: imageUrl.toString(), key }, 201)
   }
 
   if (resource === 'images' && id && context.request.method === 'GET') {

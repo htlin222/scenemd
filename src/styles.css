@@ -481,19 +481,16 @@ body { background: var(--surface); }
 }
 .editor-wrap textarea::selection { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .markdown-composer { position: relative; width: 100%; height: 100%; min-width: 0; padding: 0; display: flex; flex-direction: column; }
-.markdown-editor-topbar { min-width: 0; min-height: 44px; flex: 0 0 44px; display: flex; align-items: center; overflow: hidden; border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent); background: var(--surface); }
-.markdown-mode-tabs { height: 44px; flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 8px 0 12px; border: 0; border-radius: 0; background: transparent; }
-.markdown-mode-tabs button { position: relative; height: 44px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; color: var(--muted); background: transparent; border: 0; border-radius: 0; font-size: 13px; font-weight: 600; }
-.markdown-mode-tabs button:hover { color: var(--ink); }
-.markdown-mode-tabs button.is-active { color: var(--ink); background: transparent; }
-.markdown-mode-tabs button.is-active::after { content: ''; position: absolute; right: 10px; bottom: 0; left: 10px; height: 2px; background: var(--accent); }
-.markdown-toolbar { min-width: 0; min-height: 44px; flex: 1 1 auto; display: flex; align-items: center; gap: 2px; padding: 0 12px 0 4px; overflow-x: auto; border: 0; background: transparent; scrollbar-width: thin; }
-.markdown-toolbar button { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; border-radius: 4px; color: var(--muted); background: transparent; }
+.markdown-editor-topbar { min-width: 0; min-height: 44px; flex: 0 0 44px; overflow: hidden; border-bottom: 1px solid color-mix(in srgb, var(--line) 72%, transparent); background: var(--surface); }
+.markdown-toolbar { min-width: 0; min-height: 44px; height: 44px; display: flex; align-items: center; gap: 2px; padding: 0 12px; overflow-x: auto; border: 0; background: transparent; scrollbar-width: thin; }
+.markdown-toolbar button { width: 30px; height: 30px; flex: 0 0 30px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: var(--muted); background: transparent; }
 .markdown-toolbar button:hover { color: var(--ink); background: var(--surface-muted); }
-.markdown-toolbar .openevidence-tool { margin-left: 8px; padding-left: 8px; width: 39px; border-left: 1px solid var(--line); border-radius: 0 4px 4px 0; }
+.markdown-toolbar .markdown-mode-button { position: relative; width: auto; min-width: 0; flex-basis: auto; display: inline-flex; gap: 6px; padding: 0 10px; color: var(--muted); font-size: 13px; font-weight: 600; }
+.markdown-toolbar .markdown-mode-button.is-active { color: var(--ink); background: var(--surface-muted); }
+.markdown-toolbar .markdown-mode-button.is-active::after { content: ''; position: absolute; right: 8px; bottom: 0; left: 8px; height: 2px; background: var(--accent); }
+.markdown-toolbar-divider { width: 1px; height: 20px; flex: 0 0 1px; margin: 0 6px; background: var(--line); }
+.markdown-toolbar .openevidence-tool { margin-left: 0; padding-left: 0; width: 30px; border-left: 0; border-radius: 4px; }
 .openevidence-tool span, .oe-mark { width: 19px; height: 19px; display: inline-grid; place-items: center; color: var(--accent); border: 1.5px solid currentColor; border-radius: 50%; font: 700 11px/1 'Source Sans 3', sans-serif; }
-.markdown-toolbar button:nth-child(1), .markdown-toolbar button:nth-child(6), .markdown-toolbar button:nth-child(9), .markdown-toolbar button:nth-child(12) { margin-left: 8px; padding-left: 8px; width: 39px; border-left: 1px solid var(--line); border-radius: 0 4px 4px 0; }
-.markdown-toolbar button:first-child { margin-left: 0; padding-left: 0; width: 30px; border-left: 0; }
 .markdown-editor-body { min-height: 0; flex: 1; overflow: hidden; border: 0; border-radius: 0; background: var(--surface); }
 .markdown-editor-body.is-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .codemirror-host, .codemirror-host > .cm-editor { width: 100%; height: 100%; min-height: 0; }
@@ -791,7 +788,6 @@ body { background: var(--surface); }
   .present-button { display: inline-flex; padding: 0 10px; }
   .workspace { height: calc(100vh - 56px); }
   .markdown-composer { width: 100%; padding-top: 0; }
-  .markdown-mode-tabs { border-left: 0; border-right: 0; border-radius: 0; }
   .markdown-editor-body { border-left: 0; border-right: 0; border-radius: 0; }
   .markdown-document { padding: 38px 22px 100px; }
   .markdown-statusbar > div:last-child span:nth-child(-n+3) { display: none; }
@@ -884,7 +880,27 @@ body { background: var(--surface); }
   .block-table td::before { content: attr(data-label); color: var(--scene-accent); font-weight: 700; }
 }
 
-/* Let the formatting toolbar use a second icon row when Scenes narrows the editor. */
-.workspace.is-preview-open .markdown-editor-topbar { min-height: 72px; flex-basis: 72px; align-items: stretch; overflow: visible; }
-.workspace.is-preview-open .markdown-mode-tabs { height: 72px; align-items: flex-start; }
-.workspace.is-preview-open .markdown-toolbar { min-height: 72px; height: 72px; align-content: center; flex-wrap: wrap; overflow: visible; padding-top: 4px; padding-bottom: 4px; }
+/* The mode controls and formatting actions share one toolbar. When Scenes
+ * narrows the editor, the unified group becomes two deliberate rows instead
+ * of overflowing over the document. */
+.workspace.is-preview-open .markdown-editor-topbar { min-height: 72px; flex-basis: 72px; overflow: hidden; }
+.workspace.is-preview-open .markdown-toolbar {
+  min-height: 72px;
+  height: 72px;
+  display: grid;
+  grid-template-columns: max-content max-content max-content 1px repeat(8, 30px);
+  grid-template-rows: repeat(2, 30px);
+  grid-auto-flow: row;
+  gap: 2px;
+  align-content: center;
+  justify-content: start;
+  padding: 5px 12px;
+  overflow: hidden;
+}
+.workspace.is-preview-open .markdown-toolbar-divider { width: 1px; height: 20px; margin: 0; align-self: center; }
+.workspace.is-preview-open .markdown-toolbar button { margin: 0; }
+
+@media (max-width: 1180px) {
+  .workspace.is-preview-open .markdown-toolbar .markdown-mode-button { width: 30px; padding: 0; justify-content: center; }
+  .workspace.is-preview-open .markdown-mode-button span { display: none; }
+}
