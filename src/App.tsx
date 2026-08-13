@@ -232,7 +232,7 @@ function updateSceneSpeakerNote(markdown: string, scene: Scene | undefined, valu
       const from = sourceOffset(source, range)
       const to = sourceOffset(source, { startLine: range.endLine, startColumn: range.endColumn })
       return `${source.slice(0, from)}${range === primary && note ? `<!-- ${note} -->` : ''}${source.slice(to)}`
-    }, markdown).replace(/\n{3,}/g, '\n\n')
+    }, markdown)
   }
   if (!note) return markdown
   const insertAt = sourceOffset(markdown, { startLine: scene.sourceRange.endLine, startColumn: scene.sourceRange.endColumn })

@@ -125,7 +125,16 @@ button:disabled { cursor: not-allowed; opacity: 0.35; }
 .preview-meta span:last-child { margin-left: auto; color: var(--accent-ink); }
 .stage-shell { width: min(100%, 1080px); aspect-ratio: 16 / 9; max-height: calc(100vh - 190px); container-type: inline-size; position: relative; box-shadow: var(--shadow); background: var(--scene-bg); overflow: hidden; border: 1px solid color-mix(in srgb, var(--scene-line) 75%, transparent); }
 .preview-area:has(.preview-speaker-notes) { justify-content: flex-start; overflow: hidden; }
-.preview-area:has(.preview-speaker-notes) .stage-shell { flex: 1 1 auto; min-height: 180px; max-height: calc(100vh - 244px - var(--notes-height, 150px)); }
+.preview-area:has(.preview-speaker-notes) .stage-shell {
+  flex: 0 0 auto;
+  width: min(100%, calc((100vh - 244px - var(--notes-height, 150px)) * 1.7778));
+  min-height: 0;
+  max-height: none;
+  margin-block: auto;
+}
+.preview-area:has(.preview-speaker-notes) .stage-shell.is-narrow {
+  width: min(100%, calc((100vh - 244px - var(--notes-height, 150px)) * 0.5625));
+}
 .preview-notes-resize { position: relative; flex: 0 0 8px; width: min(100%, 1080px); height: 8px; padding: 0; border: 0; background: transparent; cursor: row-resize; touch-action: none; }
 .preview-notes-resize::before { content: ''; position: absolute; top: 3px; right: 0; left: 0; height: 1px; background: var(--line); }
 .preview-notes-resize span { position: absolute; top: 50%; left: 50%; width: 48px; height: 3px; border-radius: 99px; background: var(--surface-raised); box-shadow: 0 0 0 1px var(--line); transform: translate(-50%, -50%); }
