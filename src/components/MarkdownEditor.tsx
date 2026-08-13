@@ -176,6 +176,8 @@ interface MarkdownEditorProps {
   onReset: () => void
   documentId: string
   saveStatus: 'saved' | 'saving' | 'conflict' | 'offline'
+  onCursorLineChange?: (line: number) => void
+  scrollRequest?: { line: number; key: number } | null
 }
 
 interface EditorStatus {
@@ -442,13 +444,14 @@ const tools: Tool[] = [
   { label: 'Add horizontal rule', icon: Minus, action: (view) => insertBlock(view, '---') },
 ]
 
-export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onReset, documentId, saveStatus }: MarkdownEditorProps) {
+export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onReset, documentId, saveStatus, onCursorLineChange, scrollRequest }: MarkdownEditorProps) {
   const editorVisible = mode !== 'preview'
   const hostRef = useRef<HTMLDivElement>(null)
   const documentRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const onChangeRef = useRef(onChange)
+  const onCursorLineChangeRef = useRef(onCursorLineChange)
   const valueRef = useRef(value)
   const imageHandlerRef = useRef<(files: File[], view: EditorView) => void>(() => undefined)
   const [status, setStatus] = useState<EditorStatus>({ line: 1, column: 1, selectedCharacters: 0, selectedLines: 0 })
@@ -468,6 +471,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     return Number.isFinite(saved) && saved >= 150 && saved <= 420 ? saved : 190
   })
   onChangeRef.current = onChange
+  onCursorLineChangeRef.current = onCursorLineChange
   valueRef.current = value
 
   useEffect(() => {
@@ -893,6 +897,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
               selectedCharacters: selection.to - selection.from,
               selectedLines: selection.empty ? 0 : lastLine - firstLine + 1,
             })
+            onCursorLineChangeRef.current?.(cursorLine.number)
             synchronizeContextTools(update.view)
           }
         }),
@@ -928,6 +933,24 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const current = view.state.doc.toString()
     if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
   }, [value])
+
+  useEffect(() => {
+    if (!scrollRequest) return
+    const view = viewRef.current
+    if (view && mode !== 'preview') {
+      const line = view.state.doc.line(Math.min(scrollRequest.line, view.state.doc.lines))
+      view.dispatch({ effects: EditorView.scrollIntoView(line.from, { y: 'center' }) })
+      return
+    }
+    const renderedDocument = documentRef.current
+    if (!renderedDocument) return
+    const lineCount = Math.max(1, value.split('\n').length - 1)
+    const scrollRange = Math.max(0, renderedDocument.scrollHeight - renderedDocument.clientHeight)
+    renderedDocument.scrollTo({
+      top: ((Math.max(1, scrollRequest.line) - 1) / lineCount) * scrollRange,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    })
+  }, [scrollRequest, mode, value])
 
   useEffect(() => {
     if (mode !== 'split') return

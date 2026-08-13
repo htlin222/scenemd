@@ -29,6 +29,7 @@ import {
   SquareLibrary,
   Sun,
   Sparkles,
+  Unlink,
   X,
 } from 'lucide-react'
 import { buildCitationReferenceMap, SceneView, BlockView, sceneSpeakerNotes } from './components/SceneView'
@@ -303,6 +304,9 @@ function App() {
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
   const [showShortcutHint, setShowShortcutHint] = useState(false)
   const [sceneIndex, setSceneIndex] = useState(0)
+  const [editorCursorLine, setEditorCursorLine] = useState(1)
+  const [editorScrollRequest, setEditorScrollRequest] = useState<{ line: number; key: number } | null>(null)
+  const [sceneSyncEnabled, setSceneSyncEnabled] = useState(() => localStorage.getItem('scenemd-scene-sync') !== 'false')
   const [revealIndex, setRevealIndex] = useState(0)
   const [blank, setBlank] = useState<'black' | 'white' | null>(null)
   const [presentationZoom, setPresentationZoom] = useState(1)
@@ -332,6 +336,28 @@ function App() {
   )
   const activeDocumentId = route.kind === 'document' ? route.id : 'readonly'
   const citationReferences = useMemo(() => buildCitationReferenceMap(plan.scenes), [plan.scenes])
+
+  useEffect(() => {
+    localStorage.setItem('scenemd-scene-sync', String(sceneSyncEnabled))
+  }, [sceneSyncEnabled])
+
+  useEffect(() => {
+    if (!sceneSyncEnabled || !showPreview || presenting) return
+    const targetIndex = plan.scenes.findIndex((scene) => scene.role !== 'cover'
+      && editorCursorLine >= scene.sourceRange.startLine
+      && editorCursorLine <= scene.sourceRange.endLine)
+    if (targetIndex >= 0) {
+      setSceneIndex((current) => current === targetIndex ? current : targetIndex)
+      setRevealIndex(0)
+    }
+  }, [editorCursorLine, plan.scenes, presenting, sceneSyncEnabled, showPreview])
+
+  const scrollEditorToScene = useCallback((index: number) => {
+    if (!sceneSyncEnabled || !showPreview || presenting) return
+    const line = plan.scenes[index]?.sourceRange.startLine ?? 0
+    if (line <= 0) return
+    setEditorScrollRequest((current) => ({ line, key: (current?.key ?? 0) + 1 }))
+  }, [plan.scenes, presenting, sceneSyncEnabled, showPreview])
   const filteredDocuments = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase()
     return query ? documents.filter((document) => document.title.toLocaleLowerCase().includes(query)) : documents
@@ -603,20 +629,30 @@ function App() {
   const navigateToLabel = useCallback((label: string) => {
     const region = regions.find((candidate) => candidate.blocks[0]?.type === 'heading' && candidate.blocks[0].depth === 1 && candidate.headingPath[0] === label)
     const targetIndex = region ? plan.scenes.findIndex((scene) => scene.regionId === region.id) : -1
-    if (targetIndex >= 0) { setSceneIndex(targetIndex); setRevealIndex(0) }
-  }, [plan.scenes, regions])
+    if (targetIndex >= 0) { setSceneIndex(targetIndex); setRevealIndex(0); scrollEditorToScene(targetIndex) }
+  }, [plan.scenes, regions, scrollEditorToScene])
 
   const goNext = useCallback(() => {
     setBlank(null)
     if (revealIndex < stepCount) setRevealIndex((value) => value + 1)
-    else { setSceneIndex((value) => Math.min(value + 1, plan.scenes.length - 1)); setRevealIndex(0) }
-  }, [plan.scenes.length, revealIndex, stepCount])
+    else {
+      const targetIndex = Math.min(sceneIndex + 1, plan.scenes.length - 1)
+      setSceneIndex(targetIndex)
+      setRevealIndex(0)
+      scrollEditorToScene(targetIndex)
+    }
+  }, [plan.scenes.length, revealIndex, sceneIndex, scrollEditorToScene, stepCount])
 
   const goPrevious = useCallback(() => {
     setBlank(null)
     if (revealIndex > 0) setRevealIndex((value) => value - 1)
-    else { setSceneIndex((value) => Math.max(0, value - 1)); setRevealIndex(0) }
-  }, [revealIndex])
+    else {
+      const targetIndex = Math.max(0, sceneIndex - 1)
+      setSceneIndex(targetIndex)
+      setRevealIndex(0)
+      scrollEditorToScene(targetIndex)
+    }
+  }, [revealIndex, sceneIndex, scrollEditorToScene])
 
   const closePresenterWindow = useCallback(() => setPresenterWindow(null), [])
 
@@ -913,7 +949,7 @@ function App() {
         <main className={`workspace ${showPreview ? 'is-preview-open' : ''}${resizingPreview ? ' is-resizing-preview' : ''}`} id="top" style={showPreview ? { '--preview-width': `${previewWidth}px` } as React.CSSProperties : undefined}>
           <section className="editor-panel" aria-label="Markdown editor">
             <div className="editor-wrap">
-              <MarkdownEditor value={markdown} onChange={(value) => { const normalized = normalizeMarkdownUrls(value); setMarkdown(normalized); setDocumentTitle(titleFromMarkdown(normalized, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} />
+              <MarkdownEditor value={markdown} onChange={(value) => { const normalized = normalizeMarkdownUrls(value); setMarkdown(normalized); setDocumentTitle(titleFromMarkdown(normalized, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} onCursorLineChange={setEditorCursorLine} scrollRequest={editorScrollRequest} />
             </div>
           </section>
 
@@ -922,6 +958,7 @@ function App() {
             <div className="preview-toolbar">
               <div className="preview-title"><Focus size={15} /><strong>Scenes</strong><span className={measuring ? 'status-dot is-working' : 'status-dot'} /></div>
               <div className="preview-tools">
+                <button className={`icon-button ${sceneSyncEnabled ? 'is-active' : ''}`} onClick={() => setSceneSyncEnabled((enabled) => !enabled)} title={sceneSyncEnabled ? 'Unlink Markdown and Scenes' : 'Link Markdown and Scenes'} aria-label={sceneSyncEnabled ? 'Unlink Markdown and Scenes' : 'Link Markdown and Scenes'} aria-pressed={sceneSyncEnabled}>{sceneSyncEnabled ? <Link2 size={16} /> : <Unlink size={16} />}</button>
                 <button className="icon-button" onClick={openPresenterWindow} title="Open presenter window" aria-label="Open presenter window"><Mic2 size={16} /></button>
                 <button className={`icon-button ${debug ? 'is-active' : ''}`} onClick={() => setDebug((value) => !value)} title="Toggle planner debug overlay" aria-label="Toggle planner debug overlay"><Bug size={16} /></button>
                 <div className="density-switch" aria-label="Presentation density">
@@ -935,7 +972,7 @@ function App() {
               <div className={`stage-shell ${viewport.width < 560 ? 'is-narrow' : ''}`} ref={previewRef}>{currentScene ? <SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={stepCount} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /> : <div className="empty-state">Start writing to compose your first scene.</div>}</div>
               <div className="scene-nav">
                 <button className="icon-button" onClick={goPrevious} disabled={sceneIndex === 0} aria-label="Previous scene"><ArrowLeft size={16} /></button>
-                <div className="scene-dots" aria-label={`Scene ${sceneIndex + 1} of ${plan.scenes.length}`}>{plan.scenes.map((scene, index) => <button key={scene.id} className={index === sceneIndex ? 'is-active' : ''} onClick={() => { setSceneIndex(index); setRevealIndex(0) }} aria-label={`Go to scene ${index + 1}`} />)}</div>
+                <div className="scene-dots" aria-label={`Scene ${sceneIndex + 1} of ${plan.scenes.length}`}>{plan.scenes.map((scene, index) => <button key={scene.id} className={index === sceneIndex ? 'is-active' : ''} onClick={() => { setSceneIndex(index); setRevealIndex(0); scrollEditorToScene(index) }} aria-label={`Go to scene ${index + 1}`} />)}</div>
                 <span className="scene-count"><strong>{String(sceneIndex + 1).padStart(2, '0')}</strong> / {String(plan.scenes.length).padStart(2, '0')}</span>
                 <button className="icon-button" onClick={goNext} disabled={sceneIndex >= plan.scenes.length - 1} aria-label="Next scene"><ArrowRight size={16} /></button>
               </div>
