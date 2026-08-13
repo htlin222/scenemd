@@ -797,10 +797,11 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         read(measureView) {
           const start = measureView.coordsAtPos(expectedFrom)
           const end = measureView.coordsAtPos(expectedTo)
+          const imagePopoverHeight = Math.min(620, window.innerHeight - 72)
           return start && end ? {
-            left: Math.max(150, Math.min(window.innerWidth - 150, (start.left + end.right) / 2)),
+            left: Math.max(260, Math.min(window.innerWidth - 260, (start.left + end.right) / 2)),
             selectionTop: Math.max(56, Math.min(start.top, end.top) - 48),
-            imageTop: Math.max(56, Math.min(Math.max(56, window.innerHeight - 440), end.bottom + 12)),
+            imageTop: Math.max(56, Math.min(window.innerHeight - imagePopoverHeight - 12, end.bottom + 12)),
           } : null
         },
         write(position, measureView) {
