@@ -766,7 +766,6 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const syntax = `![${formatMarpitImageAlt(nextOptions)}](${nextUrl})`
     view.dispatch({
       changes: { from: current.from, to: current.to, insert: syntax },
-      selection: { anchor: current.from + 2 },
     })
     setImageTool({ ...current, to: current.from + syntax.length, url: nextUrl, options: nextOptions })
   }
