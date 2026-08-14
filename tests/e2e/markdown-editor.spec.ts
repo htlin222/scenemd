@@ -39,15 +39,15 @@ test('clicking inside image syntax opens the popover', async ({ page }) => {
   await expect(page.locator('.figure-dialog')).toContainText('Figure')
 })
 
-test('saving the dialog preserves a same-paragraph caption untouched', async ({ page }) => {
-  // design v5: the dialog edits only the figure; caption text is edited as
-  // ordinary markdown and must survive a dialog save byte-for-byte.
+test('saving the dialog keeps the caption and normalizes legacy options away', async ({ page }) => {
+  // design v5: the dialog edits only the figure; the caption survives, and
+  // retired options like width normalize out of the syntax on save.
   await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
   const dialog = page.locator('.figure-dialog')
   await expect(dialog).toBeVisible()
   await dialog.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText(
-    '![Hybrid chart](https://img.test/three.png){width=40%} Hybrid legend text.',
+    '![Hybrid chart](https://img.test/three.png) Hybrid legend text.',
   )
 })
 
@@ -56,15 +56,13 @@ test('the popover round-trips hybrid attribute syntax', async ({ page }) => {
   const popover = page.locator('.figure-dialog')
   await expect(popover).toBeVisible()
 
-  // Bracket text is verbatim alt; config comes from the {…} block.
+  // Bracket text is verbatim alt; size is the only writable config.
   await expect(popover.getByLabel('Alt text')).toHaveValue('Hybrid chart')
 
-  await popover.locator('summary', { hasText: 'Advanced' }).click()
-  await expect(popover.getByLabel('Width')).toHaveValue('40%')
-  await popover.getByLabel('Width').fill('55%')
+  await popover.getByLabel('Size (scene %)').fill('55%')
   await popover.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText(
-    '![Hybrid chart](https://img.test/three.png){width=55%} Hybrid legend text.',
+    '![Hybrid chart](https://img.test/three.png){size=55%} Hybrid legend text.',
   )
 })
 
@@ -84,7 +82,7 @@ test('dragging the size handle on the canvas writes a size attribute', async ({ 
   await page.mouse.up()
 
   await dialog.getByRole('button', { name: 'Save' }).click()
-  await expect(page.locator('.cm-content')).toContainText(/\{size=7\d% width=40%\}/)
+  await expect(page.locator('.cm-content')).toContainText(/\{size=7\d%\} Hybrid legend text\./)
 })
 
 test('the size handle drags all the way to full bleed', async ({ page }) => {
@@ -103,7 +101,7 @@ test('the size handle drags all the way to full bleed', async ({ page }) => {
   await expect(dialog.locator('.figure-size-handle')).toHaveText('100%')
 
   await dialog.getByRole('button', { name: 'Save' }).click()
-  await expect(page.locator('.cm-content')).toContainText('{size=100% width=40%}')
+  await expect(page.locator('.cm-content')).toContainText('{size=100%} Hybrid legend text.')
 })
 
 test('an external value update keeps the cursor where it was', async ({ page }) => {

@@ -85,32 +85,26 @@ describe('Quarto-style attributes', () => {
 })
 
 describe('formatImageAttributes', () => {
-  it('formats only non-default options', () => {
-    const options = parseImageAttributes('chart', 'width=40% layout=hero')
-    expect(formatImageAttributes(options)).toBe('{width=40% layout=hero}')
+  // design v5: `size` is the only author-configurable thing — everything else
+  // is dictated by the forced figure layout, so the write path emits size
+  // alone and legacy options normalize away.
+  it('writes only the size', () => {
+    const options = parseImageAttributes('chart', 'size=45% width=40% layout=hero filter="brightness:.8"')
+    expect(formatImageAttributes(options)).toBe('{size=45%}')
   })
 
-  it('returns an empty string when everything is default', () => {
-    const options = parseImageAttributes('just alt', '')
-    expect(formatImageAttributes(options)).toBe('')
+  it('returns an empty string without a size', () => {
+    expect(formatImageAttributes(parseImageAttributes('just alt', ''))).toBe('')
+    expect(formatImageAttributes(parseImageAttributes('chart', 'width=480px fit=auto'))).toBe('')
   })
 
-  it('quotes the filter list', () => {
-    const options = parseImageAttributes('a', 'filter="brightness:.8 sepia:50%"')
-    expect(formatImageAttributes(options)).toBe('{filter="brightness:.8 sepia:50%"}')
-  })
-
-  it('round-trips every attribute losslessly', () => {
-    const attrs = 'width=480px height=280px layout=hero fit=auto bg side=left split=40% vertical filter="brightness:.8"'
-    const options = parseImageAttributes('auto hero alt words', attrs)
-    const reparsed = parseImageAttributes(options.alt, formatImageAttributes(options).slice(1, -1))
-    expect(reparsed).toEqual(options)
-  })
-
-  it('round-trips legacy Marpit options into the new syntax', () => {
+  it('round-trips the size and normalizes legacy Marpit options away', () => {
     const legacy = parseMarpitImageAlt('bg left:33% w:480 brightness:.8 the alt')
-    const formatted = formatImageAttributes(legacy)
-    const reparsed = parseImageAttributes(legacy.alt, formatted.slice(1, -1))
-    expect(reparsed).toEqual(legacy)
+    expect(legacy.width).toBe('480')
+    expect(formatImageAttributes(legacy)).toBe('')
+
+    const sized = parseImageAttributes('the alt', 'size=45%')
+    const reparsed = parseImageAttributes(sized.alt, formatImageAttributes(sized).slice(1, -1))
+    expect(reparsed).toEqual(sized)
   })
 })

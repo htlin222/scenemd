@@ -185,16 +185,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
               event.target.value = ''
             }} />
           </div>
-          <details className="figure-dialog-advanced">
-            <summary>Advanced</summary>
-            <div className="figure-dialog-advanced-grid">
-              <label><span>Size (scene %)</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" /></label>
-              <label><span>Scaling</span><select value={state.options.fit} onChange={(event) => onChange({ fit: event.target.value as MarpitImageOptions['fit'] })}><option value="contain">Fit · no crop</option><option value="auto">Natural size</option></select></label>
-              <label><span>Width</span><input value={state.options.width} onChange={(event) => onChange({ width: event.target.value })} placeholder="e.g. 480px" /></label>
-              <label><span>Height</span><input value={state.options.height} onChange={(event) => onChange({ height: event.target.value })} placeholder="e.g. 280px" /></label>
-              <label className="figure-field-wide"><span>Filters</span><input value={state.options.filters} onChange={(event) => onChange({ filters: event.target.value })} placeholder="brightness:.8 sepia:50%" /></label>
-            </div>
-          </details>
+          <label><span>Size (scene %)</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title="The only figure setting: how much of the scene it occupies. Everything else follows the fixed layout." /></label>
         </div>
         <footer>
           <button onClick={onCancel}>Cancel</button>
