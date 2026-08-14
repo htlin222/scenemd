@@ -678,7 +678,11 @@ body { background: var(--surface); }
 .markdown-statusbar .save-status.is-offline { color: var(--danger, #b6483d); }
 .markdown-statusbar button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; color: var(--muted); background: transparent; border-radius: 3px; font-size: inherit; }
 .markdown-statusbar button:hover { color: var(--ink); background: var(--surface); }
-.cm-image-preview { width: min(560px, calc(100% - 8px)); height: clamp(140px, 24vh, 240px); display: grid; grid-template-rows: minmax(0, 1fr) auto; margin: 8px 0 18px; padding: 8px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--surface-muted) 55%, transparent); }
+/* Vertical spacing around the preview must be padding on the wrapper: CodeMirror
+   measures block widgets with getBoundingClientRect, which excludes margins, so
+   any margin here shifts the position↔coordinate mapping for everything below. */
+.cm-image-preview-block { padding: 8px 0 18px; }
+.cm-image-preview { width: min(560px, calc(100% - 8px)); height: clamp(140px, 24vh, 240px); display: grid; grid-template-rows: minmax(0, 1fr) auto; margin: 0; padding: 8px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--line) 70%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--surface-muted) 55%, transparent); }
 .cm-image-preview img { width: 100%; height: 100%; min-height: 0; display: block; object-fit: contain; object-position: center; }
 .cm-image-preview figcaption { padding: 6px 2px 0; overflow: hidden; color: var(--muted); font: 500 11px/1.3 'Source Sans 3', sans-serif; text-overflow: ellipsis; white-space: nowrap; }
 .image-upload-stack { position: absolute; right: 18px; bottom: 46px; z-index: 30; width: min(330px, calc(100% - 36px)); display: grid; gap: 8px; }

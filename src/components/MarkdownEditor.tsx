@@ -64,6 +64,8 @@ class MarkdownImagePreviewWidget extends WidgetType {
   constructor(readonly url: string, readonly alt: string) { super() }
   eq(other: MarkdownImagePreviewWidget) { return other.url === this.url && other.alt === this.alt }
   toDOM() {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'cm-image-preview-block'
     const figure = document.createElement('figure')
     figure.className = 'cm-image-preview'
     const image = document.createElement('img')
@@ -76,7 +78,8 @@ class MarkdownImagePreviewWidget extends WidgetType {
       caption.textContent = this.alt
       figure.appendChild(caption)
     }
-    return figure
+    wrapper.appendChild(figure)
+    return wrapper
   }
   ignoreEvent() { return false }
 }
@@ -830,7 +833,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   useEffect(() => {
     if (!hostRef.current || !editorVisible) return
 
-    const synchronizeContextTools = (editor: EditorView) => {
+    const synchronizeContextTools = (editor: EditorView, pointerSelect: boolean) => {
       // Once opened, the image popover owns its draft lifecycle. Focus moving
       // into a form field, remote autosave reconciliation, or a mapped editor
       // selection must not dismiss it or replace its unsaved values.
@@ -844,7 +847,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       const imagePattern = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
       let match: RegExpExecArray | null
       let imageMatch: { from: number; to: number; alt: string; url: string } | null = null
-      if (selection.empty) {
+      // The popover only opens on a deliberate mouse click; keyboard cursor
+      // motion and typing may pass through the image syntax without it.
+      if (selection.empty && pointerSelect) {
         while ((match = imagePattern.exec(line.text))) {
           const from = line.from + match.index
           const to = from + match[0].length
@@ -932,7 +937,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
               selectedLines: selection.empty ? 0 : lastLine - firstLine + 1,
             })
             onCursorLineChangeRef.current?.(cursorLine.number)
-            synchronizeContextTools(update.view)
+            synchronizeContextTools(update.view, update.transactions.some((transaction) => transaction.isUserEvent('select.pointer')))
           }
         }),
         EditorView.theme({
