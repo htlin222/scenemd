@@ -169,6 +169,10 @@ await send('Runtime.enable')
 await send('Log.enable')
 await send('Page.enable')
 await send('Network.enable')
+// The reused Chrome profile caches hashed assets AND index.html — a stale
+// index silently pins the whole previous build, making CSS/JS edits invisible
+// to the test. Never trust the profile cache.
+await send('Network.setCacheDisabled', { cacheDisabled: true })
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
 await send('Page.navigate', { url: baseUrl })
 
@@ -268,8 +272,13 @@ if (!preview.scenes || preview.scaledPreviewFontSize < 11 || !preview.overflow?.
 // image really reaches the scene's right and bottom edges (design v5.1: the
 // panel undoes .scene-content's insets) and the prose stayed in the left column.
 let bgGeometry = null
-const sceneDotCount = await evaluate(`document.querySelectorAll('.scene-dots button').length`)
-for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
+// Two passes: the first walk can race the replan that follows the bg paste,
+// so a miss waits for the plan to settle and walks the (possibly regrown)
+// dot list once more.
+for (let attempt = 0; attempt < 2 && !bgGeometry; attempt++) {
+  if (attempt) await wait(1000)
+  const sceneDotCount = await evaluate(`document.querySelectorAll('.scene-dots button').length`)
+  for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
   await evaluate(`document.querySelectorAll('.scene-dots button')[${index}]?.click()`)
   await wait(120)
   bgGeometry = await evaluate(`(() => {
@@ -277,7 +286,7 @@ for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
     if (!scene) return null
     const image = scene.querySelector('.figure-bg-panel img')
     const text = scene.querySelector('.figure-bg-text p')
-    const heading = scene.querySelector('.figure-bg-left .scene-heading')
+    const nav = scene.querySelector('.scene-section-nav')
     if (!image || !text) return { missing: true }
     const sceneRect = scene.getBoundingClientRect()
     const imageRect = image.getBoundingClientRect()
@@ -290,13 +299,14 @@ for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
       rightGap: sceneRect.right - imageRect.right,
       bottomGap: sceneRect.bottom - imageRect.bottom,
       paintedShortfall: imageRect.height - paintedHeight,
-      // full height: the image's top must reach the heading's top edge, not
-      // start below the heading (design v5.1: heading lives in the left column)
-      topAlignedWithHeading: !heading || imageRect.top <= heading.getBoundingClientRect().top + 2,
+      // full height: the image's top edge sits flush under the section-nav
+      // strip (design v5.1 「頂到 menu」)
+      topGap: nav ? imageRect.top - nav.getBoundingClientRect().bottom : 0,
       textLeftOfImage: textRect.right <= imageRect.left,
-      hasLegend: Boolean(scene.querySelector('.figure-bg-caption')),
+      hasLegend: Boolean(scene.querySelector(".figure-bg-caption")),
     }
   })()`)
+  }
 }
 if (!bgGeometry || bgGeometry.missing) {
   const debugState = await evaluate(`JSON.stringify({
@@ -305,7 +315,7 @@ if (!bgGeometry || bgGeometry.missing) {
   })`)
   throw new Error(`figure-bg scene not found or incomplete: ${JSON.stringify(bgGeometry)} ${debugState}`)
 }
-if (Math.abs(bgGeometry.rightGap) > 3 || Math.abs(bgGeometry.bottomGap) > 3 || bgGeometry.paintedShortfall > 3 || !bgGeometry.topAlignedWithHeading || !bgGeometry.textLeftOfImage || !bgGeometry.hasLegend) {
+if (Math.abs(bgGeometry.rightGap) > 3 || Math.abs(bgGeometry.bottomGap) > 3 || bgGeometry.paintedShortfall > 3 || Math.abs(bgGeometry.topGap) > 3 || !bgGeometry.textLeftOfImage || !bgGeometry.hasLegend) {
   throw new Error(`figure-bg bleed geometry failed: ${JSON.stringify(bgGeometry)}`)
 }
 const bgShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })

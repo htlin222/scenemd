@@ -129,7 +129,7 @@ describe('planScenes — bg figures', () => {
 
   it('scales the left column when its text outgrows the scene', () => {
     const { blocks, regions } = regionsFrom('大量內文段落。\n\n![chart](fig.png){bg}\n\n圖說。\n')
-    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 220 : block.type === 'figure' ? 280 : 40))
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 180 : block.type === 'figure' ? 280 : 40))
     const plan = planScenes(regions, measurements, 430, 'balanced')
 
     expect(plan.scenes).toHaveLength(1)
@@ -361,6 +361,14 @@ describe('chooseLayout', () => {
   it('chooses figure-bg when any figure carries the bg flag', () => {
     const bgOptions = parseImageAttributes('alt', 'bg')
     expect(chooseLayout([block({ id: 'f', type: 'figure', imageOptions: bgOptions }), block({ id: 'p' })])).toBe('figure-bg')
+  })
+
+  it('lets figure-bg outrank statement — blockHeight prices bg figures at zero, which only the bleed panel honors', () => {
+    const bgOptions = parseImageAttributes('alt', 'bg')
+    expect(chooseLayout([
+      block({ id: 'q', type: 'blockquote', layoutHint: 'statement' }),
+      block({ id: 'f', type: 'figure', imageOptions: bgOptions }),
+    ])).toBe('figure-bg')
   })
 
   it('chooses text when there is no media', () => {

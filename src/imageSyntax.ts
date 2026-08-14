@@ -74,7 +74,19 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
 
   options.alt = alt.join(' ')
   options.filters = filters.join(' ')
+  normalizeBackground(options)
   return options
+}
+
+// bg is the full-bleed mode (design v5.1): the panel owns the geometry, so
+// every sizing option is cleared — otherwise BlockView's inline width/fit
+// styles would override the panel's height-driven layout.
+function normalizeBackground(options: MarpitImageOptions): void {
+  if (!options.background) return
+  options.size = ''
+  options.width = ''
+  options.height = ''
+  options.fit = 'contain'
 }
 
 export function formatMarpitImageAlt(options: MarpitImageOptions): string {
@@ -162,8 +174,7 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
     else if (key === 'filter') options.filters = value.trim()
   }
   if (!sawFigAlt && QUARTO_MARKER.test(attributes)) options.alt = ''
-  // bg is the full-bleed mode (design v5.1) — size has no meaning there.
-  if (options.background) options.size = ''
+  normalizeBackground(options)
   return options
 }
 
@@ -181,9 +192,12 @@ function clampSize(value: string): string {
 // normalize to `{bg}`.
 export function formatImageAttributes(options: MarpitImageOptions): string {
   if (options.background) return '{bg}'
-  // The dialog feeds free-text straight into options.size — validate and
-  // clamp here so a typo can never be written into the document.
-  return SIZE_PATTERN.test(options.size) ? `{size=${clampSize(options.size)}}` : ''
+  // The dialog feeds free-text straight into options.size — normalize a bare
+  // number ("45" → 45%) and clamp, so a near-miss never drops the attribute
+  // block (a bare ![alt](url) re-enters legacy Marpit alt parsing, which
+  // would eat config-looking words out of the alt text).
+  const numeric = options.size.match(/^(\d+(?:\.\d+)?)%?$/)
+  return numeric ? `{size=${clampSizePercent(Number(numeric[1]))}%}` : ''
 }
 
 export function imageFilterCss(filters: string): string | undefined {

@@ -44,7 +44,7 @@
   以 browser-check 截圖校準——唯一的調校常數。
 - planner 不知道圖片比例(也不該知道),一律按面板吃滿 62% 的最壞情況規劃左欄。
 - `figureTextScale` 沿用到 figure-bg:左欄超高先縮字(floor 0.6),再拆 scene;
-  拆頁時 bg 圖留在第一頁。
+  拆頁沿文件順序,bg 圖落在其原始位置所屬的那一頁。
 
 ## 語法與 round-trip
 

@@ -221,7 +221,11 @@ function figureColumns(blocks: PresentationBlock[], measurements: Map<string, nu
 function bgTextColumn(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): { headingTotal: number; available: number; textNeeded: number } {
   const { headingTotal, available } = headingArea(blocks, measurements, sceneBudget)
   const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
-  return { headingTotal, available, textNeeded: stackHeight(prose, measurements, sceneBudget, 12) * BG_TEXT_WIDTH_FACTOR }
+  // The figures' captions render as real left-column paragraphs, so charge
+  // them the same allowance the figure layout reserves per captioned figure.
+  const captionAllowance = blocks
+    .filter((block) => block.type === 'figure' && (block.caption?.length || block.alt)).length * FIGURE_CAPTION_ALLOWANCE
+  return { headingTotal, available, textNeeded: (stackHeight(prose, measurements, sceneBudget, 12) + captionAllowance) * BG_TEXT_WIDTH_FACTOR }
 }
 
 // Shared shrink policy for figure text columns: scale down to the floor, and
@@ -262,12 +266,14 @@ function usedHeight(blocks: PresentationBlock[], measurements: Map<string, numbe
 }
 
 export function chooseLayout(blocks: PresentationBlock[]): SceneLayout {
+  // design v5.1: a bg figure turns the scene into the full-height right-bleed
+  // layout — figure panel right, all text (body + legend + quotes) in the
+  // left column. It outranks statement: blockHeight prices bg figures at
+  // zero, which only holds when the bleed panel actually renders them.
+  if (blocks.some((block) => block.type === 'figure' && block.imageOptions?.background)) return 'figure-bg'
   if (blocks.some((block) => block.layoutHint === 'statement') || (blocks.length === 1 && blocks[0].type === 'blockquote')) {
     return 'statement'
   }
-  // design v5.1: a bg figure turns the scene into the full-height right-bleed
-  // layout — figure panel right, all text (body + legend) in the left column.
-  if (blocks.some((block) => block.type === 'figure' && block.imageOptions?.background)) return 'figure-bg'
   // design v5: every figure scene has exactly one structure — an optional
   // heading, then figure left / text right. Composition never changes it.
   if (blocks.some((block) => block.type === 'figure')) return 'figure'

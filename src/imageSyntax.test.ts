@@ -15,19 +15,21 @@ describe('parseImageAttributes', () => {
   })
 
   it('parses the full attribute vocabulary', () => {
-    const options = parseImageAttributes('chart', 'width=480px height=280px layout=hero fit=auto bg side=left split=40% vertical filter="brightness:.8 sepia:50%"')
+    const options = parseImageAttributes('chart', 'width=480px height=280px layout=hero fit=auto side=left split=40% vertical filter="brightness:.8 sepia:50%"')
     expect(options).toMatchObject({
       alt: 'chart',
       width: '480px',
       height: '280px',
       layout: 'hero',
       fit: 'auto',
-      background: true,
       side: 'left',
       splitSize: '40%',
       vertical: true,
       filters: 'brightness:.8 sepia:50%',
     })
+    // bg owns the geometry (design v5.1): adding it clears the sizing options.
+    const withBg = parseImageAttributes('chart', 'width=480px fit=auto bg')
+    expect(withBg).toMatchObject({ background: true, width: '', height: '', fit: 'contain' })
   })
 
   it('ignores unknown keys and invalid values instead of guessing', () => {
@@ -74,6 +76,18 @@ describe('bg mode', () => {
     const options = parseImageAttributes('alt', 'bg size=60%')
     expect(options.background).toBe(true)
     expect(options.size).toBe('')
+  })
+
+  it('clears every sizing option next to bg — the panel owns the geometry', () => {
+    const hybrid = parseImageAttributes('alt', 'bg width=40% height=200px fit=auto')
+    expect(hybrid.width).toBe('')
+    expect(hybrid.height).toBe('')
+    expect(hybrid.fit).toBe('contain')
+
+    const legacy = parseMarpitImageAlt('bg w:300 auto the alt')
+    expect(legacy.background).toBe(true)
+    expect(legacy.width).toBe('')
+    expect(legacy.fit).toBe('contain')
   })
 
   it('writes bg alone, overriding every other option', () => {
@@ -124,9 +138,12 @@ describe('formatImageAttributes', () => {
     expect(formatImageAttributes(options)).toBe('{size=45%}')
   })
 
-  it('clamps and validates free-text size on write', () => {
+  it('clamps and normalizes free-text size on write', () => {
     const options = parseImageAttributes('alt', 'size=45%')
     expect(formatImageAttributes({ ...options, size: '150%' })).toBe('{size=100%}')
+    // A bare number keeps the attribute block: dropping it would re-enter
+    // legacy Marpit alt parsing and eat config-looking words from the alt.
+    expect(formatImageAttributes({ ...options, size: '45' })).toBe('{size=45%}')
     expect(formatImageAttributes({ ...options, size: '300px' })).toBe('')
   })
 
