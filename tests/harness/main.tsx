@@ -23,6 +23,8 @@ const INITIAL_MARKDOWN = [
   'Legend two explains the second figure.', // 11
   '', // 12
   'Closing paragraph at the bottom.', // 13
+  '', // 14
+  '![Hybrid chart](https://img.test/three.png){width=40%} Hybrid legend text.', // 15
 ].join('\n')
 
 function Harness() {

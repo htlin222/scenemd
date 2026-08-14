@@ -29,6 +29,28 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(heading?.importance).toBe(1)
   })
 
+  it('reads a hybrid attribute block as config and keeps the bracket as verbatim alt', () => {
+    // design: docs/plans/2026-08-14-image-config-design.md — the attribute
+    // block is the only config source; option-looking words stay in the alt.
+    const blocks = parsePresentationDocument('![auto hero chart](fig.png){width=40% layout=hero}\n')
+    const figure = find(blocks, 'figure')
+
+    expect(figure?.alt).toBe('auto hero chart')
+    expect(figure?.imageOptions?.width).toBe('40%')
+    expect(figure?.imageOptions?.layout).toBe('hero')
+    expect(figure?.caption).toBeUndefined()
+  })
+
+  it('excludes the attribute block from the same-paragraph caption', () => {
+    const blocks = parsePresentationDocument('![chart](fig.png){width=40%} 圖一：腎絲球過濾率\n')
+    const figure = find(blocks, 'figure')
+
+    expect(figure?.imageOptions?.width).toBe('40%')
+    const captionText = JSON.stringify(figure?.caption ?? [])
+    expect(captionText).toContain('圖一：腎絲球過濾率')
+    expect(captionText).not.toContain('width=40%')
+  })
+
   it('normalizes an image and its caption into one atomic figure', () => {
     // spec: "Image and caption normalize into one atomic figure."
     const blocks = parsePresentationDocument('![w:520px Bone marrow](marrow.jpg)\n')

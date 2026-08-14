@@ -83,6 +83,77 @@ export function formatMarpitImageAlt(options: MarpitImageOptions): string {
   return tokens.join(' ')
 }
 
+function defaultOptions(alt: string): MarpitImageOptions {
+  return {
+    alt,
+    background: false,
+    fit: 'contain',
+    layout: 'legend',
+    side: 'none',
+    splitSize: '50%',
+    width: '',
+    height: '',
+    filters: '',
+    vertical: false,
+  }
+}
+
+function attributeTokens(source: string): string[] {
+  return source.match(/[^\s"]*"[^"]*"|[^\s"]+/g) ?? []
+}
+
+function unquote(value: string): string {
+  return value.startsWith('"') && value.endsWith('"') && value.length >= 2 ? value.slice(1, -1) : value
+}
+
+/**
+ * Hybrid syntax: `![alt](url){key=value …}`. With an attribute block present
+ * (attributes !== null) the bracket text is verbatim alt and only the block
+ * configures the image; without one the legacy Marpit alt tokenizer applies.
+ * Unknown keys and invalid values are dropped, never guessed into alt.
+ */
+export function parseImageAttributes(alt: string, attributes: string | null): MarpitImageOptions {
+  if (attributes === null) return parseMarpitImageAlt(alt)
+  const options = defaultOptions(alt)
+  for (const token of attributeTokens(attributes.trim())) {
+    const separator = token.indexOf('=')
+    if (separator < 0) {
+      const flag = token.toLowerCase()
+      if (flag === 'bg') options.background = true
+      else if (flag === 'vertical') options.vertical = true
+      continue
+    }
+    const key = token.slice(0, separator).toLowerCase()
+    const value = unquote(token.slice(separator + 1))
+    if (key === 'width' && LENGTH_PATTERN.test(value)) options.width = value
+    else if (key === 'height' && LENGTH_PATTERN.test(value)) options.height = value
+    else if (key === 'layout' && ['legend', 'hero', 'auto'].includes(value)) options.layout = value as ImageLayout
+    else if (key === 'fit' && ['contain', 'auto'].includes(value)) options.fit = value as ImageFit
+    else if (key === 'side' && ['left', 'right'].includes(value)) options.side = value as ImageSide
+    else if (key === 'split' && /^\d+(?:\.\d+)?%$/.test(value)) options.splitSize = value
+    else if (key === 'filter') options.filters = value.trim()
+  }
+  return options
+}
+
+export function formatImageAttributes(options: MarpitImageOptions): string {
+  const tokens: string[] = []
+  if (options.width) tokens.push(`width=${options.width}`)
+  if (options.height) tokens.push(`height=${options.height}`)
+  if (options.layout !== 'legend') tokens.push(`layout=${options.layout}`)
+  if (options.fit === 'auto') tokens.push('fit=auto')
+  if (options.background) {
+    tokens.push('bg')
+    if (options.side !== 'none') {
+      tokens.push(`side=${options.side}`)
+      tokens.push(`split=${options.splitSize || '50%'}`)
+    }
+  }
+  if (options.vertical) tokens.push('vertical')
+  if (options.filters.trim()) tokens.push(`filter="${options.filters.trim()}"`)
+  return tokens.length ? `{${tokens.join(' ')}}` : ''
+}
+
 export function imageFilterCss(filters: string): string | undefined {
   const result = filters.split(/\s+/).filter(Boolean).map((token) => {
     const separator = token.indexOf(':')

@@ -13,7 +13,7 @@ test.beforeEach(async ({ page }) => {
   )
   await page.goto('/tests/harness/')
   await expect(page.locator('.cm-content')).toBeVisible()
-  await expect(page.locator('.cm-image-preview')).toHaveCount(2)
+  await expect(page.locator('.cm-image-preview')).toHaveCount(3)
 })
 
 test('clicking a legend paragraph below image previews selects that line', async ({ page }) => {
@@ -55,6 +55,24 @@ test('the popover reads and rewrites the same-paragraph legend', async ({ page }
   // Reopening the popover reads the saved legend back.
   await page.locator('.cm-line', { hasText: '![Second figure]' }).click({ position: { x: 40, y: 16 } })
   await expect(popover.getByLabel('Legend text')).toHaveValue('圖二：新的 legend 文字')
+})
+
+test('the popover round-trips hybrid attribute syntax', async ({ page }) => {
+  await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
+  const popover = page.locator('.image-syntax-popover')
+  await expect(popover).toBeVisible()
+
+  // Bracket text is verbatim alt; config comes from the {…} block; the legend
+  // excludes the attribute block.
+  await expect(popover.getByLabel('Alt text')).toHaveValue('Hybrid chart')
+  await expect(popover.getByLabel('Width')).toHaveValue('40%')
+  await expect(popover.getByLabel('Legend text')).toHaveValue('Hybrid legend text.')
+
+  await popover.getByLabel('Width').fill('55%')
+  await popover.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('.cm-content')).toContainText(
+    '![Hybrid chart](https://img.test/three.png){width=55%} Hybrid legend text.',
+  )
 })
 
 test('an external value update keeps the cursor where it was', async ({ page }) => {

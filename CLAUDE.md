@@ -81,7 +81,7 @@ Vite emits `version.json` with the build timestamp (`deployVersionPlugin`), serv
 - Block ids are content hashes and `sourceRange` is carried end to end — both drive editor ↔ scene scroll sync and plan stability. Do not regenerate ids from array indices alone.
 - Prefer a semantic break or an under-filled scene over shrinking type or crowding.
 - Presentation hints are HTML comments applied to the next block and are hard constraints: `present: break | keep | hero | hide | only | step`, plus the column group `present: columns [n]` / `present: column` / `present: end-columns`. Other `<!-- -->` comments become speaker notes.
-- Image options live in Marpit-style alt text (`src/imageSyntax.ts`); `parseMarpitImageAlt` / `formatMarpitImageAlt` must round-trip losslessly, since the visual image popover rewrites source through them.
+- Image config uses the hybrid syntax `![alt](url){key=value …}` (`src/imageSyntax.ts`, design in `docs/plans/2026-08-14-image-config-design.md`): bracket text is verbatim alt, the attribute block is the only config source, and text sharing the image's paragraph is the legend. Legacy Marpit alt tokens are still read when no attribute block exists, but every rewrite (image popover included) emits hybrid syntax. `parseImageAttributes` / `formatImageAttributes` must round-trip losslessly.
 - Never split image-caption pairs or display math.
 
 ## Git workflow

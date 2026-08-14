@@ -53,7 +53,8 @@ import {
   remarkBracketCitations,
   type CitationIdentifier,
 } from '../citations'
-import { formatMarpitImageAlt, imageFilterCss, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
+import { formatImageAttributes, imageFilterCss, parseImageAttributes, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
+import { remarkFoldImageAttributes } from '../lib/imageAttributesMdast'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
 import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
 import { minimalDocChange } from '../lib/minimalChange'
@@ -148,7 +149,7 @@ export function MarkdownDocumentView({ value, className = '' }: { value: string;
   return (
     <article className={`markdown-document ${className}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkBracketCitations]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkBracketCitations, remarkFoldImageAttributes]}
         rehypePlugins={[rehypeKatex]}
         skipHtml
         components={{
@@ -804,7 +805,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       while (markerIndex >= 0) {
         const imageStart = source.lastIndexOf('![', markerIndex)
         if (imageStart >= 0 && !source.slice(imageStart, markerIndex).includes('\n')) {
-          candidates.push({ from: imageStart, to: markerIndex + marker.length })
+          const markerEnd = markerIndex + marker.length
+          const trailingAttributes = source.slice(markerEnd).match(/^\{[^}\n]*\}/)
+          candidates.push({ from: imageStart, to: markerEnd + (trailingAttributes?.[0].length ?? 0) })
         }
         markerIndex = source.indexOf(marker, markerIndex + marker.length)
       }
@@ -813,7 +816,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       from = nearest.from
       to = nearest.to
     }
-    const syntax = `![${formatMarpitImageAlt(current.options)}](${current.url.trim()})`
+    const syntax = `![${current.options.alt}](${current.url.trim()})${formatImageAttributes(current.options)}`
     const change = current.legendEditable
       ? imageParagraphReplacement(source, from, to, syntax, current.legend)
       : { from, to, insert: syntax }
@@ -851,9 +854,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       const selection = editor.state.selection.main
       const text = selection.empty ? '' : editor.state.sliceDoc(selection.from, selection.to)
       const line = editor.state.doc.lineAt(selection.head)
-      const imagePattern = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
+      const imagePattern = /!\[([^\]\n]*)\]\(([^)\n]+)\)(\{[^}\n]*\})?/g
       let match: RegExpExecArray | null
-      let imageMatch: { from: number; to: number; alt: string; url: string } | null = null
+      let imageMatch: { from: number; to: number; alt: string; url: string; attributes: string | null } | null = null
       // The popover only opens on a deliberate mouse click; keyboard cursor
       // motion and typing may pass through the image syntax without it.
       if (selection.empty && pointerSelect) {
@@ -861,7 +864,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           const from = line.from + match.index
           const to = from + match[0].length
           if (selection.head >= from && selection.head <= to) {
-            imageMatch = { from, to, alt: match[1], url: match[2].trim() }
+            imageMatch = { from, to, alt: match[1], url: match[2].trim(), attributes: match[3] ? match[3].slice(1, -1) : null }
             break
           }
         }
@@ -889,7 +892,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
             setSelectionTool(null)
             setAiError(null)
             const legendContext = readImageLegend(measureView.state.doc.toString(), imageMatch.from, imageMatch.to)
-            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseMarpitImageAlt(imageMatch.alt), legend: legendContext.legend, legendEditable: legendContext.editable, left: position.left, top: position.imageTop }
+            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseImageAttributes(imageMatch.alt, imageMatch.attributes), legend: legendContext.legend, legendEditable: legendContext.editable, left: position.left, top: position.imageTop }
             imageToolRef.current = nextImageTool
             setImageTool(nextImageTool)
           } else {

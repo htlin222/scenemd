@@ -3,7 +3,7 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { InlineNode, PresentationBlock, SemanticRegion, SourceRange } from './types'
-import { parseMarpitImageAlt } from '../imageSyntax'
+import { parseImageAttributes } from '../imageSyntax'
 import { remarkBracketCitations } from '../citations'
 
 interface MdPosition {
@@ -237,9 +237,21 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
       const block = baseBlock(node, index, 'figure')
       block.semanticRole = 'figure'
       block.url = image.url ?? ''
-      block.imageOptions = parseMarpitImageAlt(image.alt ?? '')
+      // A `{key=value}` block directly after the image is hybrid-syntax config,
+      // never caption text (docs/plans/2026-08-14-image-config-design.md).
+      const children = node.children ?? []
+      const sibling = children[children.indexOf(image) + 1]
+      const attributeMatch = sibling?.type === 'text' ? sibling.value.match(/^\{([^}\n]*)\}/) : null
+      block.imageOptions = parseImageAttributes(image.alt ?? '', attributeMatch ? attributeMatch[1] : null)
       block.alt = block.imageOptions.alt || 'Presentation figure'
-      const remaining = (node.children ?? []).filter((child) => child !== image)
+      const remaining = children
+        .filter((child) => child !== image)
+        .map((child) => {
+          if (child !== sibling || !attributeMatch) return child
+          const rest = (sibling.value ?? '').slice(attributeMatch[0].length).replace(/^\s+/, '')
+          return rest ? { ...sibling, value: rest } : null
+        })
+        .filter((child): child is NonNullable<typeof child> => child !== null)
       block.caption = remaining.length ? inlineOf(remaining) : undefined
       block.importance = 0.8
       return [block]
