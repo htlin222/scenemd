@@ -21,6 +21,7 @@
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:watch": "vitest",
     "preview": "vite preview",
     "deploy:live": "wrangler deploy -c worker/wrangler.jsonc",
@@ -53,6 +54,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260813.1",
+    "@playwright/test": "^1.62.1",
     "@types/katex": "0.16.8",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
