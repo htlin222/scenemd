@@ -32,6 +32,10 @@ function blockHeight(block: PresentationBlock, measurements: Map<string, number>
   // Sized figures are computed contextually inside usedHeight's figure branch
   // (their basis is the space remaining under the heading, design v5). Here a
   // sized figure only needs a sane fallback for the pre-split pass.
+  // A bg figure lives in the full-height bleed panel (design v5.1) — it never
+  // occupies the text flow, so it costs the vertical budget nothing anywhere:
+  // pre-split, scoring, and usedHeight all see zero.
+  if (block.type === 'figure' && block.imageOptions?.background) return 0
   const sized = block.type === 'figure' ? block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/) : null
   if (sized) return (sceneBudget * Number(sized[1])) / 100
   const measured = measurements.get(block.id)
@@ -160,6 +164,11 @@ const MIN_FRAME_SHRINK = 0.75
 // Above-figure prose may shrink to fit the scene ("縮小文字，總之塞就對了"),
 // down to this floor — below it the scene overflows visibly instead.
 const MIN_TEXT_SCALE = 0.6
+// The bg bleed panel may take up to 62% of the scene width (design v5.1), so
+// left-column prose wraps roughly this much taller than its full-width
+// measurement. The planner cannot know the image's aspect ratio, so it plans
+// for the worst case; calibrate against browser-check screenshots.
+const BG_TEXT_WIDTH_FACTOR = 1.9
 
 interface FigureColumns {
   headingTotal: number
@@ -199,14 +208,39 @@ function figureColumns(blocks: PresentationBlock[], measurements: Map<string, nu
   return { headingTotal, available, frames, nonFrame, aboveHeight }
 }
 
+// The bg layout's left column: everything that is not a heading or a figure,
+// stacked, with the width-compensation factor applied (the panel narrows the
+// column to ~38% of the scene, so full-width measurements read short).
+function bgTextColumn(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): { headingTotal: number; available: number; textNeeded: number } {
+  const { headingTotal, available } = figureColumns(blocks, measurements, sceneBudget)
+  const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
+  const stacked = prose.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+    + Math.max(0, prose.length - 1) * 12
+  return { headingTotal, available, textNeeded: stacked * BG_TEXT_WIDTH_FACTOR }
+}
+
 export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number | undefined {
-  if (chooseLayout(blocks) !== 'figure') return undefined
+  const layout = chooseLayout(blocks)
+  if (layout === 'figure-bg') {
+    const { available, textNeeded } = bgTextColumn(blocks, measurements, sceneBudget)
+    if (textNeeded <= available) return undefined
+    return Math.max(MIN_TEXT_SCALE, Math.round((available / textNeeded) * 100) / 100)
+  }
+  if (layout !== 'figure') return undefined
   const { available, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
   if (aboveHeight <= available) return undefined
   return Math.max(MIN_TEXT_SCALE, Math.round((available / aboveHeight) * 100) / 100)
 }
 
 function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number {
+  if (chooseLayout(blocks) === 'figure-bg') {
+    // The bg figure costs nothing (it bleeds beside the flow); the scene is
+    // the heading plus the left text column, which shrinks like above-figure
+    // prose does before it overflows.
+    const { headingTotal, available, textNeeded } = bgTextColumn(blocks, measurements, sceneBudget)
+    const effectiveText = Math.min(textNeeded, Math.max(available, textNeeded * MIN_TEXT_SCALE))
+    return headingTotal + effectiveText
+  }
   if (chooseLayout(blocks) === 'figure') {
     const { headingTotal, available, frames, nonFrame, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
     const columnNeeded = frames + nonFrame
@@ -222,6 +256,9 @@ export function chooseLayout(blocks: PresentationBlock[]): SceneLayout {
   if (blocks.some((block) => block.layoutHint === 'statement') || (blocks.length === 1 && blocks[0].type === 'blockquote')) {
     return 'statement'
   }
+  // design v5.1: a bg figure turns the scene into the full-height right-bleed
+  // layout — figure panel right, all text (body + legend) in the left column.
+  if (blocks.some((block) => block.type === 'figure' && block.imageOptions?.background)) return 'figure-bg'
   // design v5: every figure scene has exactly one structure — an optional
   // heading, then figure left / text right. Composition never changes it.
   if (blocks.some((block) => block.type === 'figure')) return 'figure'

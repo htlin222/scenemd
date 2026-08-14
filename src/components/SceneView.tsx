@@ -382,7 +382,23 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
         {scene.continuationLabel && <div className="continuation-label">{scene.continuationLabel}</div>}
         {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
-        {scene.layout === 'figure' ? (
+        {scene.layout === 'figure-bg' ? (
+          // design v5.1: the bg figure bleeds to the right and bottom edges at
+          // full remaining height; every piece of text — body copy, legend
+          // paragraphs, and the figures' own captions — lives in the left column.
+          <div className="figure-bg-grid">
+            <div className="figure-bg-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
+              {renderBlocks(prose)}
+              {visibleFigures.filter((block) => block.caption?.length || block.alt).map((block) => (
+                <p className="figure-bg-caption" key={`${block.id}-caption`}>
+                  {block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}
+                  <InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} />
+                </p>
+              ))}
+            </div>
+            <div className="figure-bg-panel">{renderBlocks(visibleFigures)}</div>
+          </div>
+        ) : scene.layout === 'figure' ? (
           // Position decides the text's role: paragraphs above the figure are
           // body copy in the right column, paragraphs below it are the legend
           // under the image (design v5).

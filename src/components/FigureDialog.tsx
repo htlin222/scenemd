@@ -191,7 +191,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
           <div className="stage-shell figure-dialog-stage">
             <SceneView scene={scene} sceneNumber={1} sceneCount={1} presentationConfig={DIALOG_CONFIG} />
           </div>
-          {handlePosition && (
+          {handlePosition && !state.options.background && (
             <button
               className="figure-size-handle"
               style={{ left: handlePosition.left, top: handlePosition.top }}
@@ -213,7 +213,10 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
               event.target.value = ''
             }} />
           </div>
-          <label><span>Size (scene %)</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title="The only figure setting: how much of the scene it occupies. Everything else follows the fixed layout." /></label>
+          <label className="figure-field-check"><input type="checkbox" checked={state.options.background} onChange={(event) => onChange({ background: event.target.checked })} title="Full-height right-bleed panel: the image runs to the scene edges, all text moves to the left column." /><span>Full bleed (bg)</span></label>
+          {!state.options.background && (
+            <label><span>Size (scene %)</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title="How much of the scene the figure occupies. Everything else follows the fixed layout." /></label>
+          )}
         </div>
         <footer>
           <button onClick={onCancel}>Cancel</button>

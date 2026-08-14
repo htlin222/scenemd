@@ -100,7 +100,7 @@ export interface SemanticRegion {
   explicitBreakAfter: boolean
 }
 
-export type SceneLayout = 'title' | 'chapter' | 'text' | 'figure' | 'statement'
+export type SceneLayout = 'title' | 'chapter' | 'text' | 'figure' | 'figure-bg' | 'statement'
 export type SceneRole = 'cover' | 'chapter' | 'content'
 
 export interface ScoreBreakdown {

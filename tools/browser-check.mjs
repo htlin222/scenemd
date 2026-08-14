@@ -219,6 +219,26 @@ const pastedImage = await evaluate(`(() => ({
 }))()`)
 if (!pastedImage.markdownInserted || !pastedImage.rendered || pastedImage.uploadErrors) throw new Error(`Clipboard image upload failed: ${JSON.stringify(pastedImage)}`)
 
+// ── bg figure markdown (design v5.1) ─────────────────────────────────────────
+// Append a `{bg}` scene reusing the image that was just uploaded, so the
+// preview section below can verify the full-height right-bleed layout.
+const uploadedImageUrl = await evaluate(`document.querySelector('.markdown-document img[src*="/api/images/"]')?.getAttribute('src')`)
+if (!uploadedImageUrl) throw new Error('No uploaded image URL available for the bg bleed check')
+const bgPasted = await evaluate(`(() => {
+  const content = document.querySelector('.cm-content')
+  if (!content) return false
+  if (content.textContent.includes('{bg}')) return true // already appended by a previous run
+  content.focus()
+  const selection = window.getSelection()
+  selection.selectAllChildren(content)
+  selection.collapseToEnd()
+  const transfer = new DataTransfer()
+  transfer.setData('text/plain', '\\n\\n## Bleed check\\n\\n左欄內文段落，確認正文留在左欄。\\n\\n![bleed](${uploadedImageUrl}){bg}\\n\\n圖說在左欄底部。\\n')
+  return content.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer })) === false
+})()`)
+if (!bgPasted) throw new Error('bg markdown paste was not applied')
+await waitForPage(`document.querySelector('.cm-content')?.textContent?.includes('{bg}')`, 'the bg figure markdown')
+
 // ── Cheat sheet ──────────────────────────────────────────────────────────────
 await evaluate(`document.querySelector('button[aria-label="Open Markdown and presentation cheat sheet"]')?.click()`)
 await waitForPage(`document.querySelectorAll('.cheatsheet-grid code').length >= 15`, 'the cheat sheet')
@@ -235,6 +255,44 @@ const preview = await evaluate(`(() => ({
   overflow: document.querySelector('.preview-meta span:last-child')?.textContent?.trim()
 }))()`)
 if (!preview.scenes || preview.scaledPreviewFontSize < 11 || !preview.overflow?.includes('no overflow')) throw new Error(`Presentation preview failed: ${JSON.stringify(preview)}`)
+
+// ── bg figure bleed geometry (design v5.1) ───────────────────────────────────
+// Walk the scene dots until the figure-bg scene is on stage, then verify the
+// image really reaches the scene's right and bottom edges (design v5.1: the
+// panel undoes .scene-content's insets) and the prose stayed in the left column.
+let bgGeometry = null
+const visitedLayouts = []
+const sceneDotCount = await evaluate(`document.querySelectorAll('.scene-dots button').length`)
+for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
+  await evaluate(`document.querySelectorAll('.scene-dots button')[${index}]?.click()`)
+  await wait(120)
+  bgGeometry = await evaluate(`(() => {
+    const scene = document.querySelector('.scene[data-layout="figure-bg"]')
+    if (!scene) return null
+    const image = scene.querySelector('.figure-bg-panel img')
+    const text = scene.querySelector('.figure-bg-text p')
+    if (!image || !text) return { missing: true }
+    const sceneRect = scene.getBoundingClientRect()
+    const imageRect = image.getBoundingClientRect()
+    const textRect = text.getBoundingClientRect()
+    return {
+      rightGap: sceneRect.right - imageRect.right,
+      bottomGap: sceneRect.bottom - imageRect.bottom,
+      textLeftOfImage: textRect.right <= imageRect.left,
+      hasLegend: Boolean(scene.querySelector('.figure-bg-caption')),
+    }
+  })()`)
+  visitedLayouts.push(await evaluate(`[...document.querySelectorAll('.scene[data-layout]')].map((scene) => scene.dataset.layout + ':' + [...scene.querySelectorAll('figure')].map((figure) => figure.dataset.background ?? 'no-bg').join(',')).join('+')`))
+}
+if (!bgGeometry || bgGeometry.missing) {
+  const imageLines = await evaluate(`[...document.querySelectorAll('.cm-line')].map((line) => line.textContent).filter((text) => text.includes('![')).join(' | ')`)
+  throw new Error(`figure-bg scene not found or incomplete: ${JSON.stringify(bgGeometry)} visited=${JSON.stringify(visitedLayouts)} imageLines=${JSON.stringify(imageLines)}`)
+}
+if (Math.abs(bgGeometry.rightGap) > 3 || Math.abs(bgGeometry.bottomGap) > 3 || !bgGeometry.textLeftOfImage || !bgGeometry.hasLegend) {
+  throw new Error(`figure-bg bleed geometry failed: ${JSON.stringify(bgGeometry)}`)
+}
+const bgShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+await writeFile('artifacts/scenemd-figure-bg.png', Buffer.from(bgShot.data, 'base64'))
 
 // ── Presentation mode ────────────────────────────────────────────────────────
 await evaluate(`document.querySelector('.present-button')?.click()`)

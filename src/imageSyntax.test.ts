@@ -61,6 +61,37 @@ describe('size attribute', () => {
   it('leaves size empty for legacy Marpit alt syntax', () => {
     expect(parseMarpitImageAlt('w:480 chart').size).toBe('')
   })
+
+  it('clamps size into the 15–100% range the dialog enforces', () => {
+    expect(parseImageAttributes('alt', 'size=150%').size).toBe('100%')
+    expect(parseImageAttributes('alt', 'size=5%').size).toBe('15%')
+    expect(parseImageAttributes('alt', 'size=45%').size).toBe('45%')
+  })
+})
+
+describe('bg mode', () => {
+  it('parses the {bg} flag and drops size next to it', () => {
+    const options = parseImageAttributes('alt', 'bg size=60%')
+    expect(options.background).toBe(true)
+    expect(options.size).toBe('')
+  })
+
+  it('writes bg alone, overriding every other option', () => {
+    expect(formatImageAttributes(parseImageAttributes('alt', 'bg'))).toBe('{bg}')
+    expect(formatImageAttributes(parseImageAttributes('alt', 'bg width=40% layout=hero'))).toBe('{bg}')
+  })
+
+  it('normalizes Marpit bg spellings to {bg}', () => {
+    expect(formatImageAttributes(parseMarpitImageAlt('bg right the alt'))).toBe('{bg}')
+    expect(formatImageAttributes(parseMarpitImageAlt('bg left:33% w:480 the alt'))).toBe('{bg}')
+  })
+
+  it('round-trips {bg}', () => {
+    const options = parseImageAttributes('the alt', 'bg')
+    const reparsed = parseImageAttributes(options.alt, formatImageAttributes(options).slice(1, -1))
+    expect(reparsed.background).toBe(true)
+    expect(reparsed.size).toBe('')
+  })
 })
 
 describe('Quarto-style attributes', () => {
@@ -93,13 +124,19 @@ describe('formatImageAttributes', () => {
     expect(formatImageAttributes(options)).toBe('{size=45%}')
   })
 
+  it('clamps and validates free-text size on write', () => {
+    const options = parseImageAttributes('alt', 'size=45%')
+    expect(formatImageAttributes({ ...options, size: '150%' })).toBe('{size=100%}')
+    expect(formatImageAttributes({ ...options, size: '300px' })).toBe('')
+  })
+
   it('returns an empty string without a size', () => {
     expect(formatImageAttributes(parseImageAttributes('just alt', ''))).toBe('')
     expect(formatImageAttributes(parseImageAttributes('chart', 'width=480px fit=auto'))).toBe('')
   })
 
   it('round-trips the size and normalizes legacy Marpit options away', () => {
-    const legacy = parseMarpitImageAlt('bg left:33% w:480 brightness:.8 the alt')
+    const legacy = parseMarpitImageAlt('left:33% w:480 brightness:.8 the alt')
     expect(legacy.width).toBe('480')
     expect(formatImageAttributes(legacy)).toBe('')
 
