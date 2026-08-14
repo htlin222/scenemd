@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 import { mergeMarkdown } from './merge'
+import { renameMarkdownTitle } from './rename'
 
 interface Env {
   DB: D1Database
@@ -243,8 +244,22 @@ export class DocumentRoom extends DurableObject<Env> {
       }
       if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
-      const body = await request.json<{ action?: 'sync' | 'push' | 'pull'; noteId?: string }>()
+      const body = await request.json<{ action?: 'sync' | 'push' | 'pull' | 'unlink'; noteId?: string }>()
       const action = body.action ?? 'sync'
+
+      if (action === 'unlink') {
+        // Unlink only forgets the association. The HackMD note itself is not
+        // touched — deleting someone's note as a side effect of a local
+        // setting change would be the wrong kind of surprise.
+        const next: DocumentState = { ...current, hackmdNoteId: null, hackmdSyncedAt: 0 }
+        await this.env.DB.prepare(
+          'UPDATE documents SET hackmd_note_id = NULL, hackmd_synced_at = 0 WHERE id = ?',
+        ).bind(documentId).run()
+        await this.ctx.storage.put('document', next)
+        this.cachedState = next
+        return json({ direction: 'unlink', document: next })
+      }
+
       const noteId = hackmdNoteId(body.noteId ?? current.hackmdNoteId ?? '')
 
       try {
@@ -318,8 +333,12 @@ export class DocumentRoom extends DurableObject<Env> {
     if (request.method === 'PATCH') {
       const current = await this.load(documentId)
       if (!current) return json({ error: 'Document not found' }, 404)
-      const body = await request.json<{ title?: string; markdown?: string; baseMarkdown?: string; presentationConfig?: unknown; baseRevision?: number }>()
+      const body = await request.json<{ title?: string; markdown?: string; baseMarkdown?: string; presentationConfig?: unknown; baseRevision?: number; rename?: boolean }>()
       let nextMarkdown = body.markdown ?? current.markdown
+      // Rename requests carry no markdown; the title follows the first H1
+      // whenever one exists, so the H1 must move with the stored title or the
+      // next autosave would revert the rename.
+      if (body.rename && body.title?.trim()) nextMarkdown = renameMarkdownTitle(nextMarkdown, body.title.trim())
       let merged = false
       if (body.baseRevision !== undefined && body.baseRevision !== current.revision) {
         if (typeof body.markdown !== 'string' || typeof body.baseMarkdown !== 'string') {
