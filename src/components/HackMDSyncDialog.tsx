@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, LoaderCircle, RefreshCw, Unlink, X } from 'lucide-react'
 import type { PresentationConfig } from '../engine/types'
+import { useModalFocus } from '../app/useModalFocus'
 
 interface SyncedDocument {
   id: string
@@ -23,6 +24,7 @@ interface HackMDResult {
 }
 
 export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose }: { documentId: string; onDocument: (document: SyncedDocument) => void; onBusyChange?: (busy: boolean) => void; onClose: () => void }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const [noteId, setNoteId] = useState('')
   const [connected, setConnected] = useState(false)
   const [accountName, setAccountName] = useState('HackMD')
@@ -103,7 +105,7 @@ export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose
   const openNoteId = noteId.trim().split('/').filter(Boolean).at(-1)
 
   return <div className="hackmd-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <dialog open className="hackmd-dialog" aria-modal="true" aria-labelledby="hackmd-title">
+    <dialog open ref={dialogRef} className="hackmd-dialog" aria-modal="true" aria-labelledby="hackmd-title">
       <header><div><span className="hackmd-mark">H</span><div><small>Integration</small><h2 id="hackmd-title">Sync with HackMD</h2></div></div><button onClick={onClose} aria-label="Close HackMD sync"><X size={18} /></button></header>
       <div className="hackmd-body">
         <p>Keep this Markdown document linked to one HackMD note. Smart sync uses the last successful sync to choose a direction and stops if both copies changed.</p>
