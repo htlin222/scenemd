@@ -192,6 +192,10 @@ npx wrangler secret put HACKMD_API -c worker/wrangler.jsonc
 
 For an edit-only access gate, create a Cloudflare Access application for the production hostname. Read-only links use unguessable share tokens, but you should choose an Access policy that matches your deployment’s intended sharing model.
 
+### Image hosting model
+
+Uploaded images are served as **capability URLs**: the path contains an unguessable UUID, anyone holding the URL can read the image, and responses are cached as immutable for a year. This is deliberate — read-only share viewers must load images without authenticating — but it means an image is only as private as its URL. Revoking a share link does not revoke images already referenced by it. Deleting a document deletes its uploaded images from R2.
+
 ## Project status
 
 SceneMD is an early, working MVP.

@@ -348,6 +348,18 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   if (!action && ['GET', 'PATCH', 'DELETE'].includes(context.request.method)) {
+    if (context.request.method === 'DELETE') {
+      // Deleting a document deletes its uploaded images. Image URLs are
+      // capability URLs (unguessable, publicly readable), so deletion is the
+      // only revocation they have — without this, every image outlives its
+      // document forever and the bucket grows monotonically (#11).
+      let cursor: string | undefined
+      do {
+        const listing: R2Objects = await context.env.IMAGES.list({ prefix: `documents/${id}/`, cursor })
+        if (listing.objects.length) await context.env.IMAGES.delete(listing.objects.map((object) => object.key))
+        cursor = listing.truncated ? listing.cursor : undefined
+      } while (cursor)
+    }
     const stub = documentStub(context.env, id)
     return stub.fetch(new Request(`https://document.internal/state/${encodeURIComponent(id)}`, {
       method: context.request.method,
