@@ -30,31 +30,13 @@ const OVERSIZED = new Set(['oversized-figure.md', 'oversized-math.md'])
 
 // Known invariant gaps in the current planner, recorded as a ratchet.
 //
-// Every remaining entry has the same measured root cause: a keep chain
-// (heading + prose + figure + prose + figure, or heading + tall code block)
-// that is itself taller than the scene capacity, so NO boundary choice can
-// satisfy the binding — global optimization (#8) removed the avoidable
-// violations and these are the unavoidable remainder. Fixing them requires
-// capacity-aware splitting of glued groups, tracked in #31. When a combo
-// below starts passing, the ratchet test fails until its entry is removed,
-// so this list can only shrink.
-//
-// Key format: `${fixture}@${viewportHeight}/${density}:${invariant}`
-const KNOWN_GAPS = new Set([
-  // Critical invariant "split image-caption pairs = 0" — figure glued to its
-  // caption ends a scene anyway.
-  // image-heavy keep gaps at 768/640 were closed by the v5 figure layout
-  // (figure regions become one scene whenever they fit).
-  ...['compact', 'balanced', 'cinematic'].flatMap((density) => [
-    `code-heavy.md@768/${density}:keep`,
-    `list-heavy.md@768/${density}:keep`,
-  ]),
-  // "orphan headings = 0" — a heading ends a scene mid-region.
-  ...['compact', 'balanced', 'cinematic'].flatMap((density) => [
-    `code-heavy.md@768/${density}:orphan`,
-    `list-heavy.md@768/${density}:orphan`,
-  ]),
-])
+// EMPTY — and it must stay that way. The history: the greedy scan's avoidable
+// violations were fixed by global optimization (#8), the figure-caption
+// splits by the v5 figure model (#38), and the remaining keep chains taller
+// than capacity by relaxOversizedChains (#31), which relaxes non-pair links
+// and splits a heading's splittable companion against the remaining space.
+// Any entry added here means a new invariant violation was introduced.
+const KNOWN_GAPS = new Set<string>([])
 
 const gapKey = (name: string, viewportHeight: number, density: Density, invariant: string) =>
   `${name}@${viewportHeight}/${density}:${invariant}`

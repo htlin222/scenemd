@@ -354,6 +354,70 @@ export function withPresentationCover(plan: ScenePlan, config: PresentationConfi
   return { ...plan, scenes: [cover, ...plan.scenes] }
 }
 
+/**
+ * Capacity-aware relaxation of keep chains (#31).
+ *
+ * The semantic normalizer glues headings to their content and figures to
+ * their surrounding prose. When such a chain measures taller than the scene
+ * capacity, the constraint network has no solution: every partition violates
+ * a binding, and no boundary search — however global — can fix an empty
+ * feasible set. This pass changes the constraints instead, in preference
+ * order:
+ *
+ * 1. Relax links that do not cut a figure from its only prose: prose-prose
+ *    links, heading links (the orphan penalty still steers placement), and
+ *    the far side of shared prose (a paragraph serving as one figure's
+ *    legend and the next figure's lead keeps its lead role).
+ * 2. Rescue a heading glued to a single splittable block that fits alone but
+ *    not together with the heading: split the block against the space left
+ *    beside the heading, so the heading keeps its first lines.
+ * 3. Anything still unfittable falls through to the warned overflow (#7).
+ *
+ * Relaxation only ADDS feasible boundaries — cloned blocks drop a flag, the
+ * scoring is untouched — so where the original bindings were satisfiable the
+ * partitioner behaves exactly as before.
+ */
+function relaxOversizedChains(blocks: PresentationBlock[], measurements: Map<string, number>, capacity: number): PresentationBlock[] {
+  const result = [...blocks]
+  let changed = false
+  let start = 0
+  while (start < result.length) {
+    let end = start
+    while (end < result.length - 1 && result[end].keepWithNext && !result[end].groupId) end += 1
+    if (end > start && usedHeight(result.slice(start, end + 1), measurements, capacity) > capacity) {
+      // Preference 2: heading + one splittable companion that fits alone.
+      if (end === start + 1 && result[start].type === 'heading') {
+        const companion = result[end]
+        const companionHeight = blockHeight(companion, measurements, capacity)
+        const besideHeading = capacity - blockHeight(result[start], measurements, capacity) - 20
+        if (companionHeight <= capacity && besideHeading > 120) {
+          const parts = continuationParts(companion, companionHeight, besideHeading, measurements)
+          if (parts.length > 1) {
+            result.splice(end, 1, ...parts)
+            changed = true
+            start = end + parts.length
+            continue
+          }
+        }
+      }
+      // Preference 1: relax every link that keeps figure-prose pairs intact.
+      for (let link = start; link < end; link += 1) {
+        const left = result[link]
+        const right = result[link + 1]
+        const relaxable = left.type === 'heading'
+          || (left.type !== 'figure' && right.type !== 'figure')
+          || (left.type === 'figure' && right.type !== 'figure' && right.keepWithNext)
+        if (!relaxable) continue
+        result[link] = { ...left, keepWithNext: false }
+        result[link + 1] = { ...right, keepWithPrevious: false }
+        changed = true
+      }
+    }
+    start = end + 1
+  }
+  return changed ? result : blocks
+}
+
 export function planScenes(
   regions: SemanticRegion[],
   measurements: Map<string, number>,
@@ -366,7 +430,11 @@ export function planScenes(
   const previousEnds = new Set(previousPlan?.scenes.map((scene) => scene.endBlockId) ?? [])
 
   for (const region of regions) {
-    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements))
+    const plannedBlocks = relaxOversizedChains(
+      region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements)),
+      measurements,
+      capacity,
+    )
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
     const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
     // A figure region IS the page the author delimited with `---` or a
