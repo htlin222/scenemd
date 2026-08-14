@@ -811,9 +811,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       </div>
       <div className="markdown-statusbar" aria-label="Editor status">
         <div><span>Ln {status.line}, Col {status.column}</span>{status.selectedCharacters > 0 && <span>{status.selectedCharacters} selected · {status.selectedLines} lines</span>}</div>
-        <div><span>{documentMetrics.lines} lines</span><span>{documentMetrics.words} words</span><span>{documentMetrics.characters} characters</span><span className={`save-status is-${saveStatus}`} role="status" aria-live="polite">{saveStatus === 'saving' ? <><LoaderCircle className="is-spinning" size={12} /> Saving…</> : saveStatus === 'conflict' ? 'Save conflict' : saveStatus === 'offline' ? 'Offline — changes pending' : <><Check size={12} /> Saved to cloud</>}</span><button onClick={onReset}><RotateCcw size={12} /> Reset</button></div>
+        <div><span>{documentMetrics.lines} lines</span><span>{documentMetrics.words} words</span><span>{documentMetrics.characters} characters</span><output className={`save-status is-${saveStatus}`}>{saveStatus === 'saving' ? <><LoaderCircle className="is-spinning" size={12} /> Saving…</> : saveStatus === 'conflict' ? 'Save conflict' : saveStatus === 'offline' ? 'Offline — changes pending' : <><Check size={12} /> Saved to cloud</>}</output><button onClick={onReset}><RotateCcw size={12} /> Reset</button></div>
       </div>
-      {selectionTool && <div className="selection-ai-tool" style={{ left: selectionTool.left, top: selectionTool.top }} onMouseDown={(event) => event.preventDefault()}>
+      {selectionTool && <div className="selection-ai-tool" role="toolbar" aria-label="Selection tools" tabIndex={-1} style={{ left: selectionTool.left, top: selectionTool.top }} onMouseDown={(event) => event.preventDefault()}>
         <button onClick={() => void makeSelectionBullets('flat')} disabled={Boolean(aiBusy) || selectionTool.text.length > 12000} title={selectionTool.text.length > 12000 ? 'Select no more than 12,000 characters' : 'Rewrite selection as flat Markdown bullets with Workers AI'}>
           {aiBusy === 'flat' ? <LoaderCircle className="is-spinning" size={15} /> : <Sparkles size={15} />}
           {aiBusy === 'flat' ? 'Making bullets…' : 'Make bullets'}
@@ -839,8 +839,8 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         </div>)}
       </div>}
       {showOpenEvidenceImport && <OpenEvidenceImportDialog onClose={() => setShowOpenEvidenceImport(false)} onInsert={insertImportedMarkdown} />}
-      {tableImport && createPortal(<div className="table-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setTableImport(null)}>
-        <section className="table-import-dialog" role="dialog" aria-modal="true" aria-labelledby="table-import-title">
+      {tableImport && createPortal(<div className="table-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setTableImport(null)}>
+        <dialog open className="table-import-dialog" aria-modal="true" aria-labelledby="table-import-title">
           <header><div><Sheet size={18} /><div><small>Smart paste</small><h2 id="table-import-title">Import table</h2></div></div><button onClick={() => setTableImport(null)} aria-label="Close table import"><X size={18} /></button></header>
           <div className="table-import-body">
             <label><span>Paste from Word, Excel, CSV, or TSV</span><textarea autoFocus value={tableImport.source} onChange={(event) => setTableImport((current) => current ? { ...current, source: event.target.value, html: '' } : current)} onPaste={(event) => {
@@ -854,10 +854,10 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
             <div className="table-import-preview">{detectedTable.rows.length ? <table><tbody>{detectedTable.rows.slice(0, 8).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => rowIndex === 0 ? <th key={cellIndex}>{cell}</th> : <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table> : <div><Sheet size={22} /><span>Your table preview appears here.</span></div>}</div>
           </div>
           <footer><span>Format is detected automatically.</span><div><button onClick={() => setTableImport(null)}>Cancel</button><button className="table-import-primary" onClick={insertImportedTable} disabled={!markdownTableFromRows(detectedTable.rows)}>Insert Markdown table</button></div></footer>
-        </section>
+        </dialog>
       </div>, document.body)}
-      {citationImport && createPortal(<div className="citation-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setCitationImport(null)}>
-        <section className="citation-import-dialog" role="dialog" aria-modal="true" aria-labelledby="citation-import-title">
+      {citationImport && createPortal(<div className="citation-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setCitationImport(null)}>
+        <dialog open className="citation-import-dialog" aria-modal="true" aria-labelledby="citation-import-title">
           <header><div><BookPlus size={18} /><div><small>AMA CSL</small><h2 id="citation-import-title">Insert citation</h2></div></div><button onClick={() => setCitationImport(null)} aria-label="Close citation import"><X size={18} /></button></header>
           <div className="citation-import-body">
             <label><span>DOI or PubMed ID</span><input autoFocus value={citationImport.identifier} onChange={(event) => setCitationImport((current) => current ? { ...current, identifier: event.target.value } : current)} placeholder="10.1016/j.chest.2024.09.016 or PMID: 28012456" /></label>
@@ -870,7 +870,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
             </div>
           </div>
           <footer><span>New references are appended without renumbering existing citations.</span><div><button onClick={() => setCitationImport(null)}>Cancel</button><button className="citation-import-primary" onClick={insertCitation} disabled={citationLookup.status !== 'ready'}>Insert [{citationLookup.existingNumber ?? 'n'}]</button></div></footer>
-        </section>
+        </dialog>
       </div>, document.body)}
     </div>
   )

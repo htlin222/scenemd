@@ -102,8 +102,8 @@ export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose
 
   const openNoteId = noteId.trim().split('/').filter(Boolean).at(-1)
 
-  return <div className="hackmd-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <section className="hackmd-dialog" role="dialog" aria-modal="true" aria-labelledby="hackmd-title">
+  return <div className="hackmd-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <dialog open className="hackmd-dialog" aria-modal="true" aria-labelledby="hackmd-title">
       <header><div><span className="hackmd-mark">H</span><div><small>Integration</small><h2 id="hackmd-title">Sync with HackMD</h2></div></div><button onClick={onClose} aria-label="Close HackMD sync"><X size={18} /></button></header>
       <div className="hackmd-body">
         <p>Keep this Markdown document linked to one HackMD note. Smart sync uses the last successful sync to choose a direction and stops if both copies changed.</p>
@@ -121,6 +121,6 @@ export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose
           <button className="hackmd-primary" onClick={() => void synchronize('sync')} disabled={Boolean(busy)} aria-busy={busy === 'sync'}><RefreshCw className={`sync-rotation-icon${busy === 'sync' ? ' is-spinning' : ''}`} size={15} /> {noteId.trim() ? 'Smart sync' : 'Create & sync'}</button>
         </div>
       </footer>
-    </section>
+    </dialog>
   </div>
 }
