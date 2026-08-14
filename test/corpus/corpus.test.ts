@@ -209,9 +209,8 @@ describe('unsplittable oversized content', () => {
     },
   )
 
-  // KNOWN GAP — spec requires overflow to be surfaced to the author, but
-  // makeScene hardcodes warning: undefined. Flips when #7 lands.
-  it.fails.each(cases.map((fixture) => [fixture.name, fixture.markdown]))(
+  // Regression coverage for #7: an overflowing scene must carry a warning.
+  it.each(cases.map((fixture) => [fixture.name, fixture.markdown]))(
     '%s: the overflowing scene carries a warning',
     (name, markdown) => {
       const { plan } = planFixture(name, markdown, 1080, 'balanced')
