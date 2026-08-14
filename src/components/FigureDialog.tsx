@@ -4,6 +4,7 @@ import { Check, Image, LoaderCircle, Upload, X } from 'lucide-react'
 import { type MarpitImageOptions } from '../imageSyntax'
 import { SceneView } from './SceneView'
 import { chooseLayout } from '../engine/planner'
+import { buildSemanticRegions, parsePresentationDocument } from '../engine/semantics'
 import { defaultPresentationConfig } from '../presentationConfig'
 import type { PresentationBlock, Scene } from '../engine/types'
 
@@ -12,6 +13,8 @@ export interface FigureDialogState {
   options: MarpitImageOptions
   legend: string
   legendEditable: boolean
+  from: number
+  documentSource: string
 }
 
 interface FigureDialogProps {
@@ -34,39 +37,61 @@ const DIALOG_SCORES = {
   stability: 0, fragmentationPenalty: 0, orphanPenalty: 0, crowdingPenalty: 0, whitespacePenalty: 0,
 }
 
-// The canvas is not a mock: the draft is rendered through the real SceneView
-// with the real scene CSS, so what the drag shows IS the size the scene gets.
-function draftScene(state: FigureDialogState): Scene {
-  const figure: PresentationBlock = {
-    id: 'figure-dialog-preview',
-    type: 'figure',
-    semanticRole: 'figure',
-    importance: 0.8,
-    keepTogether: true,
-    keepWithNext: false,
-    keepWithPrevious: false,
-    breakBefore: 'auto',
-    breakAfter: 'auto',
-    visibility: 'normal',
-    layoutHint: state.options.layout === 'hero' ? 'hero' : state.options.layout === 'auto' ? 'auto' : 'legend',
-    sourceRange: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
+// The canvas is not a mock: the figure's whole page — heading, body text,
+// legend, neighbors — is parsed from the live document and rendered through
+// the real SceneView with the draft substituted in, so dragging shows every
+// relative change exactly as the scene will get it.
+function contextScene(state: FigureDialogState): { scene: Scene; targetId: string | null } {
+  const line = state.documentSource.slice(0, state.from).split('\n').length
+  const blocks = parsePresentationDocument(state.documentSource)
+  const regions = buildSemanticRegions(blocks)
+  const region = regions.find((candidate) => candidate.blocks.some((block) =>
+    block.type === 'figure' && block.sourceRange.startLine <= line && line <= block.sourceRange.endLine))
+  const target = region?.blocks.find((block) =>
+    block.type === 'figure' && block.sourceRange.startLine <= line && line <= block.sourceRange.endLine)
+
+  const draftFigure = (base: PresentationBlock): PresentationBlock => ({
+    ...base,
     url: state.url,
-    alt: state.options.alt,
-    imageOptions: state.options,
-    caption: state.legend.trim() ? [{ type: 'text', value: state.legend.trim() }] : undefined,
-  }
+    alt: state.options.alt || base.alt,
+    imageOptions: { ...state.options },
+    caption: state.legend.trim() ? [{ type: 'text', value: state.legend.trim() }] : base.caption,
+  })
+
+  const sceneBlocks = region && target
+    ? region.blocks.map((block) => (block === target ? draftFigure(block) : block))
+    : [draftFigure({
+        id: 'figure-dialog-preview',
+        type: 'figure',
+        semanticRole: 'figure',
+        importance: 0.8,
+        keepTogether: true,
+        keepWithNext: false,
+        keepWithPrevious: false,
+        breakBefore: 'auto',
+        breakAfter: 'auto',
+        visibility: 'normal',
+        layoutHint: 'auto',
+        sourceRange: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
+        url: state.url,
+        alt: state.options.alt,
+      })]
+
   return {
-    id: 'figure-dialog-scene',
-    role: 'content',
-    regionId: 'figure-dialog',
-    startBlockId: figure.id,
-    endBlockId: figure.id,
-    blocks: [figure],
-    layout: chooseLayout([figure]),
-    sourceRange: figure.sourceRange,
-    fillRatio: 0,
-    score: 0,
-    scores: DIALOG_SCORES,
+    scene: {
+      id: 'figure-dialog-scene',
+      role: 'content',
+      regionId: region?.id ?? 'figure-dialog',
+      startBlockId: sceneBlocks[0].id,
+      endBlockId: sceneBlocks[sceneBlocks.length - 1].id,
+      blocks: sceneBlocks,
+      layout: chooseLayout(sceneBlocks),
+      sourceRange: sceneBlocks[0].sourceRange,
+      fillRatio: 0,
+      score: 0,
+      scores: DIALOG_SCORES,
+    },
+    targetId: target?.id ?? 'figure-dialog-preview',
   }
 }
 
@@ -77,12 +102,13 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
   const [uploadError, setUploadError] = useState('')
   const [handlePosition, setHandlePosition] = useState<{ left: number; top: number } | null>(null)
   const size = sizePercent(state.options)
-  const scene = useMemo(() => draftScene(state), [state])
+  const { scene, targetId } = useMemo(() => contextScene(state), [state])
 
   useLayoutEffect(() => {
     const reposition = () => {
       const canvas = canvasRef.current
-      const frame = canvas?.querySelector('.figure-frame')
+      const frame = canvas?.querySelector(targetId ? `[data-block-id="${targetId}"] .figure-frame` : '.figure-frame')
+        ?? canvas?.querySelector('.figure-frame')
       if (!canvas || !frame) {
         setHandlePosition(null)
         return
@@ -101,7 +127,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
       image?.removeEventListener('load', reposition)
       window.removeEventListener('resize', reposition)
     }
-  }, [scene])
+  }, [scene, targetId])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

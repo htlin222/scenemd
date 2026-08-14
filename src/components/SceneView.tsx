@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import katex from 'katex'
 import type { InlineNode, PresentationBlock, PresentationConfig, Scene } from '../engine/types'
 import { imageFilterCss } from '../imageSyntax'
@@ -82,6 +82,26 @@ function sceneCitationNumbers(scene: Scene): number[] {
     block.listItems?.forEach((item) => collectCitationNumbers(item, numbers))
   })
   return [...numbers].sort((left, right) => left - right)
+}
+
+// Publishes the frame area's laid-out height as a pixel CSS variable so sized
+// figure frames get a definite height (see the sized frameStyle in BlockView).
+function FigureFrameArea({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [areaHeight, setAreaHeight] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const observer = new ResizeObserver(() => setAreaHeight(element.clientHeight))
+    observer.observe(element)
+    setAreaHeight(element.clientHeight)
+    return () => observer.disconnect()
+  }, [])
+  return (
+    <div className="figure-frame-area" ref={ref} style={areaHeight ? { '--frame-area-height': `${areaHeight}px` } as CSSProperties : undefined}>
+      {children}
+    </div>
+  )
 }
 
 function TableCellContent({ value }: { value: string }) {
@@ -176,12 +196,14 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
       filter: imageFilterCss(block.imageOptions?.filters ?? ''),
       objectFit: block.imageOptions?.fit === 'auto' ? 'scale-down' : 'contain',
     }
-    // `size=NN%` resolves against the figure column, whose height is exactly
-    // the space remaining under the heading — the layout does the arithmetic,
-    // so the planner and the pixels can never drift apart (design v5).
+    // `size=NN%` resolves against the frame area (the space left after the
+    // heading and the legend). The area publishes its measured height as a
+    // pixel variable, so the frame height is a definite length — which lets
+    // the image's auto width resolve and the fit-content column truly follow
+    // the figure instead of leaving dead padding when it shrinks.
     const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
     const frameStyle = sized
-      ? { '--figure-height': `${Number(sized[1])}%` } as CSSProperties
+      ? { '--figure-height': `calc(var(--frame-area-height, 320px) * ${Number(sized[1]) / 100})` } as CSSProperties
       : block.imageOptions?.height
         ? { '--figure-height': block.imageOptions.height } as CSSProperties
         : undefined
@@ -349,7 +371,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
           // under the image (design v5).
           <div className={`figure-grid${aboveProse.length ? '' : ' is-figure-only'}`}>
             <div className="figure-col">
-              <div className="figure-frame-area">{renderBlocks(visibleFigures)}</div>
+              <FigureFrameArea>{renderBlocks(visibleFigures)}</FigureFrameArea>
               {!!belowProse.length && <div className="figure-below-caption">{renderBlocks(belowProse)}</div>}
             </div>
             {!!aboveProse.length && <div className="figure-text-col" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>{renderBlocks(aboveProse)}</div>}

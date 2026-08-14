@@ -37,6 +37,9 @@ test('clicking inside image syntax opens the popover', async ({ page }) => {
   await page.locator('.cm-line', { hasText: '![First figure]' }).click({ position: { x: 40, y: 16 } })
   await expect(page.locator('.figure-dialog')).toBeVisible()
   await expect(page.locator('.figure-dialog')).toContainText('Figure')
+  // The canvas renders the figure's whole page from the live document, so
+  // neighboring content shows for relative-size feedback while dragging.
+  await expect(page.locator('.figure-dialog-canvas')).toContainText('Legend one explains the first figure')
 })
 
 test('saving the dialog keeps the caption and normalizes legacy options away', async ({ page }) => {

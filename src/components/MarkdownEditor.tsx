@@ -219,6 +219,7 @@ interface ImageToolState {
   options: MarpitImageOptions
   legend: string
   legendEditable: boolean
+  documentSource: string
   left: number
   top: number
 }
@@ -879,8 +880,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           } else if (imageMatch) {
             setSelectionTool(null)
             setAiError(null)
-            const legendContext = readImageLegend(measureView.state.doc.toString(), imageMatch.from, imageMatch.to)
-            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseImageAttributes(imageMatch.alt, imageMatch.attributes), legend: legendContext.legend || quartoImageCaption(imageMatch.alt, imageMatch.attributes) || '', legendEditable: legendContext.editable, left: position.left, top: position.imageTop }
+            const documentSource = measureView.state.doc.toString()
+            const legendContext = readImageLegend(documentSource, imageMatch.from, imageMatch.to)
+            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseImageAttributes(imageMatch.alt, imageMatch.attributes), legend: legendContext.legend || quartoImageCaption(imageMatch.alt, imageMatch.attributes) || '', legendEditable: legendContext.editable, documentSource, left: position.left, top: position.imageTop }
             imageToolRef.current = nextImageTool
             setImageTool(nextImageTool)
           } else {
