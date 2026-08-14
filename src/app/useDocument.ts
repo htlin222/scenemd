@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { defaultPresentationConfig, normalizePresentationConfig } from '../presentationConfig'
 import type { PresentationConfig } from '../engine/types'
 import {
@@ -211,6 +211,8 @@ export function useDocument(route: Route) {
     setSaveStatus('saved')
   }
 
+  const clearApiError = useCallback(() => setApiError(null), [])
+
   const discardConflictBackup = () => {
     if (route.kind === 'document') clearConflictBackup(route.id)
     setConflictBackup(null)
@@ -221,7 +223,7 @@ export function useDocument(route: Route) {
     documentTitle, setDocumentTitle,
     documentRevision,
     presentationConfig, setPresentationConfig,
-    loading, apiError, clearApiError: () => setApiError(null),
+    loading, apiError, clearApiError,
     saveStatus, saveConflict, useCloudConflictVersion, keepLocalConflictVersion,
     conflictBackup, discardConflictBackup,
     shareLink, dismissShareLink: () => setShareLink(null), shareBusy, createShareLink,

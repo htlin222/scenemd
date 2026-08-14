@@ -200,17 +200,6 @@ function App() {
     window.location.reload()
   }, [refreshingDeploy])
 
-  useEffect(() => {
-    if (!sceneSyncEnabled || !showPreview || presenting) return
-    const targetIndex = plan.scenes.findIndex((scene) => scene.role !== 'cover'
-      && editorCursorLine >= scene.sourceRange.startLine
-      && editorCursorLine <= scene.sourceRange.endLine)
-    if (targetIndex >= 0) {
-      setSceneIndex((current) => current === targetIndex ? current : targetIndex)
-      setRevealIndex(0)
-    }
-  }, [editorCursorLine, plan.scenes, presenting, sceneSyncEnabled, showPreview])
-
   const scrollEditorToScene = useCallback((index: number) => {
     if (!sceneSyncEnabled || !showPreview || presenting) return
     const line = plan.scenes[index]?.sourceRange.startLine ?? 0
@@ -224,7 +213,7 @@ function App() {
     clearApiError()
     setShowPreview(false)
     setSceneIndex(0)
-  }, [])
+  }, [clearApiError])
 
   const library = useDocumentLibrary(route.kind === 'home', navigate)
 
@@ -326,6 +315,18 @@ function App() {
     openPresenterWindow, closePresenterWindow,
     startPresentation, exitPresentation,
   } = usePresentationRuntime(presenting, setPresenting, plan, regions, stepCount, sceneIndex, setSceneIndex, scrollEditorToScene, documentTitle, theme, route.kind)
+
+  useEffect(() => {
+    if (!sceneSyncEnabled || !showPreview || presenting) return
+    const targetIndex = plan.scenes.findIndex((scene) => scene.role !== 'cover'
+      && editorCursorLine >= scene.sourceRange.startLine
+      && editorCursorLine <= scene.sourceRange.endLine)
+    if (targetIndex >= 0) {
+      setSceneIndex((current) => current === targetIndex ? current : targetIndex)
+      setRevealIndex(0)
+    }
+  }, [editorCursorLine, plan.scenes, presenting, sceneSyncEnabled, showPreview, setRevealIndex])
+
   const navigationLabels = useMemo(() => [...new Set(regions
     .filter((region) => region.blocks[0]?.type === 'heading' && region.blocks[0].depth === 1)
     .map((region) => region.headingPath[0])
@@ -341,7 +342,7 @@ function App() {
   const changeSpeakerNote = useCallback((value: string) => {
     setNoteDraft(value)
     setMarkdown((source) => updateSceneSpeakerNote(source, currentScene, value))
-  }, [currentScene])
+  }, [currentScene, setMarkdown])
 
   const generateTranscript = useCallback(async () => {
     if (!currentScene || currentScene.role === 'cover' || transcriptBusy) return

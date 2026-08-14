@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
-import { createPortal } from 'react-dom'
 import { basicSetup, EditorView } from 'codemirror'
 import { Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, type EditorState, type Range } from '@codemirror/state'
@@ -10,9 +9,12 @@ import { autocompletion } from '@codemirror/autocomplete'
 import { tags } from '@lezer/highlight'
 import { documentOutline, type OutlineItem } from './editor/outline'
 import { presentationHintCompletion } from './editor/hints'
-import { columnsMarkdown, insertBlock, insertColumns, insertLink, prefixLines, replaceSelection, type Tool } from './editor/commands'
-import { detectPastedTable, markdownTableFromRows } from './editor/markdownTable'
+import { insertBlock, insertColumns, insertLink, prefixLines, replaceSelection, type Tool } from './editor/commands'
 import { MarkdownDocumentView } from './editor/MarkdownDocumentView'
+import { ImageUploadToasts, useImageUpload } from './editor/useImageUpload'
+import { TableImportDialog, useTableImport } from './editor/useTableImport'
+import { CitationImportDialog, useCitationImport } from './editor/useCitationImport'
+import { SelectionToolbar, useSelectionAi } from './editor/useSelectionAi'
 import {
   Bold,
   BookPlus,
@@ -40,19 +42,11 @@ import {
   Quote,
   RotateCcw,
   Sheet,
-  Sparkles,
   Strikethrough,
   Table2,
   Upload,
-  X,
 } from 'lucide-react'
 import type { ThemeMode } from '../engine/types'
-import {
-  existingCitationReferenceNumber,
-  insertCitationReference,
-  normalizeCitationIdentifier,
-  type CitationIdentifier,
-} from '../citations'
 import { formatImageAttributes, parseImageAttributes, quartoImageCaption, type MarpitImageOptions } from '../imageSyntax'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
 import { FigureDialog } from './FigureDialog'
@@ -123,21 +117,6 @@ interface EditorStatus {
   selectedLines: number
 }
 
-interface ImageUploadState {
-  id: string
-  name: string
-  status: 'uploading' | 'complete' | 'error'
-  message?: string
-}
-
-interface SelectionToolState {
-  from: number
-  to: number
-  text: string
-  left: number
-  top: number
-}
-
 interface ImageToolState {
   from: number
   to: number
@@ -149,20 +128,6 @@ interface ImageToolState {
   documentSource: string
   left: number
   top: number
-}
-
-interface CitationImportState {
-  identifier: string
-  from: number
-  to: number
-}
-
-interface CitationLookupState {
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  citation: string
-  error: string
-  existingNumber?: number
-  identifier?: CitationIdentifier
 }
 
 const tools: Tool[] = [
@@ -205,17 +170,16 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   const onCursorLineChangeRef = useRef(onCursorLineChange)
   const valueRef = useRef(value)
   const imageHandlerRef = useRef<(files: File[], view: EditorView) => void>(() => undefined)
+
+  const { imageUploads, dismissUpload, handleFiles } = useImageUpload(documentId, viewRef, valueRef, onChangeRef)
+  imageHandlerRef.current = handleFiles
+  const { tableImport, setTableImport, detectedTable, openTableImport, insertImportedTable } = useTableImport(viewRef)
+  const { citationImport, setCitationImport, citationLookup, openCitationImport, insertCitation } = useCitationImport(viewRef, valueRef)
+  const { selectionTool, setSelectionTool, aiBusy, aiError, setAiError, makeSelectionBullets, makeSelectionColumns } = useSelectionAi(viewRef, documentId)
   const [status, setStatus] = useState<EditorStatus>({ line: 1, column: 1, selectedCharacters: 0, selectedLines: 0 })
-  const [imageUploads, setImageUploads] = useState<ImageUploadState[]>([])
   const [showOpenEvidenceImport, setShowOpenEvidenceImport] = useState(false)
-  const [tableImport, setTableImport] = useState<{ source: string; html: string; from: number; to: number } | null>(null)
-  const [citationImport, setCitationImport] = useState<CitationImportState | null>(null)
-  const [citationLookup, setCitationLookup] = useState<CitationLookupState>({ status: 'idle', citation: '', error: '' })
-  const [selectionTool, setSelectionTool] = useState<SelectionToolState | null>(null)
   const [imageTool, setImageTool] = useState<ImageToolState | null>(null)
   const imageToolRef = useRef<ImageToolState | null>(null)
-  const [aiBusy, setAiBusy] = useState<'flat' | 'nested' | null>(null)
-  const [aiError, setAiError] = useState<string | null>(null)
   const [showLineNumbers, setShowLineNumbers] = useState(() => localStorage.getItem('scenemd-editor-line-numbers') === 'true')
   const [showOutline, setShowOutline] = useState(() => localStorage.getItem('scenemd-editor-outline') !== 'false')
   const [outlineWidth, setOutlineWidth] = useState(() => {
@@ -270,99 +234,14 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && setTableImport(null)
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [tableImport])
+  }, [tableImport, setTableImport])
 
   useEffect(() => {
     if (!citationImport) return
     const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && setCitationImport(null)
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [citationImport])
-
-  useEffect(() => {
-    if (!citationImport) return
-    const normalized = normalizeCitationIdentifier(citationImport.identifier)
-    if (!citationImport.identifier.trim()) {
-      setCitationLookup({ status: 'idle', citation: '', error: '' })
-      return
-    }
-    if (!normalized) {
-      setCitationLookup({ status: 'error', citation: '', error: 'Paste a DOI or PubMed ID, for example 10.1016/j.chest.2024.09.016 or PMID: 28012456' })
-      return
-    }
-    const existingNumber = existingCitationReferenceNumber(valueRef.current, normalized)
-    if (existingNumber !== null) {
-      setCitationLookup({ status: 'ready', citation: '', error: '', existingNumber, identifier: normalized })
-      return
-    }
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => {
-      setCitationLookup({ status: 'loading', citation: '', error: '' })
-      const endpoint = new URL('/api/citations', window.location.origin)
-      endpoint.searchParams.set(normalized.type, normalized.value)
-      endpoint.searchParams.set('format', 'ama')
-      endpoint.searchParams.set('v', '2')
-      void fetch(endpoint, { signal: controller.signal })
-        .then(async (response) => {
-          const result = await response.json() as { citation?: string; doi?: string | null; pmid?: string; error?: string }
-          if (!response.ok || !result.citation) throw new Error(result.error || 'Citation lookup failed')
-          const resolved = normalizeCitationIdentifier(result.doi ? result.doi : result.pmid ? `PMID: ${result.pmid}` : normalized.value) ?? normalized
-          const resolvedExisting = existingCitationReferenceNumber(valueRef.current, resolved)
-          setCitationLookup({
-            status: 'ready',
-            citation: result.citation,
-            error: '',
-            existingNumber: resolvedExisting ?? undefined,
-            identifier: resolved,
-          })
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) return
-          setCitationLookup({ status: 'error', citation: '', error: error instanceof Error ? error.message : 'Citation lookup failed' })
-        })
-    }, 320)
-    return () => {
-      window.clearTimeout(timer)
-      controller.abort()
-    }
-  }, [citationImport?.identifier])
-
-  const dismissUpload = (id: string) => setImageUploads((uploads) => uploads.filter((upload) => upload.id !== id))
-
-  imageHandlerRef.current = (files, view) => {
-    let insertAt = view.state.selection.main.from
-    void (async () => {
-      for (const file of files) {
-        const uploadId = crypto.randomUUID()
-        setImageUploads((uploads) => [...uploads, { id: uploadId, name: file.name || 'Pasted image', status: 'uploading' }])
-        try {
-          const response = await fetch(`/api/uploads/images?documentId=${encodeURIComponent(documentId)}`, {
-            method: 'POST',
-            headers: { 'Content-Type': file.type, 'X-File-Name': file.name },
-            body: file,
-          })
-          const result = await response.json() as { url?: string; error?: string }
-          if (!response.ok || !result.url) throw new Error(result.error || 'Image upload failed')
-          const imageUrl = new URL(result.url, window.location.origin).toString()
-          const alt = (file.name || 'Pasted image').replace(/\.[^.]+$/, '').replace(/[[\]]/g, '')
-          const markdownImage = `${insertAt > 0 ? '\n' : ''}![${alt}](${imageUrl})\n`
-          const activeView = viewRef.current
-          if (activeView === view) {
-            const position = Math.min(insertAt, activeView.state.doc.length)
-            activeView.dispatch({ changes: { from: position, insert: markdownImage }, selection: { anchor: position + markdownImage.length } })
-            insertAt = position + markdownImage.length
-            activeView.focus()
-          } else {
-            onChangeRef.current(`${valueRef.current}${valueRef.current.endsWith('\n') ? '' : '\n'}${markdownImage}`)
-          }
-          setImageUploads((uploads) => uploads.map((upload) => upload.id === uploadId ? { ...upload, status: 'complete', message: 'Inserted into Markdown' } : upload))
-          window.setTimeout(() => dismissUpload(uploadId), 1800)
-        } catch (error) {
-          setImageUploads((uploads) => uploads.map((upload) => upload.id === uploadId ? { ...upload, status: 'error', message: error instanceof Error ? error.message : 'Upload failed' } : upload))
-        }
-      }
-    })()
-  }
+  }, [citationImport, setCitationImport])
 
   const documentMetrics = useMemo(() => ({
     words: value.split(/\s+/).filter(Boolean).length,
@@ -370,60 +249,6 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     characters: value.length,
   }), [value])
   const outline = useMemo(() => documentOutline(value), [value])
-  const detectedTable = useMemo(() => detectPastedTable(tableImport?.source ?? '', tableImport?.html ?? ''), [tableImport?.source, tableImport?.html])
-
-  const openTableImport = () => {
-    const view = viewRef.current
-    if (!view) return
-    const { from, to } = view.state.selection.main
-    setTableImport({ source: view.state.sliceDoc(from, to), html: '', from, to })
-  }
-
-  const openCitationImport = () => {
-    const view = viewRef.current
-    if (!view) return
-    const selection = view.state.selection.main
-    const selected = view.state.sliceDoc(selection.from, selection.to).trim()
-    const selectedIdentifier = normalizeCitationIdentifier(selected)
-    setCitationImport({
-      identifier: selectedIdentifier ? selected : '',
-      from: selectedIdentifier ? selection.from : selection.head,
-      to: selectedIdentifier ? selection.to : selection.head,
-    })
-  }
-
-  const insertCitation = () => {
-    const view = viewRef.current
-    const normalized = citationLookup.identifier ?? normalizeCitationIdentifier(citationImport?.identifier ?? '')
-    if (!view || !citationImport || !normalized || citationLookup.status !== 'ready') return
-    const result = insertCitationReference(
-      view.state.doc.toString(),
-      citationImport.from,
-      citationImport.to,
-      normalized,
-      citationLookup.citation,
-    )
-    view.dispatch({
-      changes: { from: 0, to: view.state.doc.length, insert: result.markdown },
-      selection: { anchor: result.cursor },
-      effects: EditorView.scrollIntoView(result.cursor, { y: 'center' }),
-    })
-    setCitationImport(null)
-    view.focus()
-  }
-
-  const insertImportedTable = () => {
-    const view = viewRef.current
-    if (!view || !tableImport) return
-    const markdownTable = markdownTableFromRows(detectedTable.rows)
-    if (!markdownTable) return
-    const prefix = tableImport.from > 0 && view.state.sliceDoc(tableImport.from - 1, tableImport.from) !== '\n' ? '\n\n' : ''
-    const suffix = tableImport.to < view.state.doc.length && view.state.sliceDoc(tableImport.to, tableImport.to + 1) !== '\n' ? '\n\n' : '\n'
-    const insert = `${prefix}${markdownTable}${suffix}`
-    view.dispatch({ changes: { from: tableImport.from, to: tableImport.to, insert }, selection: { anchor: tableImport.from + insert.length } })
-    setTableImport(null)
-    view.focus()
-  }
 
   const navigateToOutlineItem = (item: OutlineItem) => {
     if (mode === 'preview') {
@@ -466,47 +291,6 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     const cursor = insertedStart >= 0 ? Math.min(aggregated.length, insertedStart + content.length) : Math.min(from + insert.length, aggregated.length)
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: aggregated }, selection: { anchor: cursor } })
     view.focus()
-  }
-
-  const makeSelectionBullets = async (mode: 'flat' | 'nested' = 'flat') => {
-    const selected = selectionTool
-    const view = viewRef.current
-    if (!selected || !view || aiBusy) return
-    setAiBusy(mode)
-    setAiError(null)
-    try {
-      const response = await fetch('/api/ai/bullets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: selected.text, mode, documentId }),
-      })
-      const result = await response.json() as { markdown?: string; error?: string }
-      if (!response.ok || !result.markdown) throw new Error(result.error || 'Could not make bullets')
-      const current = view.state.sliceDoc(selected.from, selected.to)
-      if (current !== selected.text) throw new Error('The selection changed before the result was ready')
-      const before = selected.from > 0 ? view.state.sliceDoc(selected.from - 1, selected.from) : '\n'
-      const after = selected.to < view.state.doc.length ? view.state.sliceDoc(selected.to, selected.to + 1) : '\n'
-      const insert = `${before === '\n' ? '' : '\n'}${result.markdown}${after === '\n' ? '' : '\n'}`
-      view.dispatch({ changes: { from: selected.from, to: selected.to, insert }, selection: { anchor: selected.from + insert.length } })
-      view.focus()
-      setSelectionTool(null)
-    } catch (error) {
-      setAiError(error instanceof Error ? error.message : 'Could not make bullets')
-    } finally {
-      setAiBusy(null)
-    }
-  }
-
-  const makeSelectionColumns = () => {
-    const selected = selectionTool
-    const view = viewRef.current
-    if (!selected || !view) return
-    const current = view.state.sliceDoc(selected.from, selected.to)
-    if (current !== selected.text) return
-    const insert = columnsMarkdown(current)
-    view.dispatch({ changes: { from: selected.from, to: selected.to, insert }, selection: { anchor: selected.from + insert.length } })
-    view.focus()
-    setSelectionTool(null)
   }
 
   const updateImageDraft = (patch: Partial<MarpitImageOptions> & { url?: string; legend?: string }) => {
@@ -703,7 +487,13 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       view.destroy()
       viewRef.current = null
     }
-  }, [editorVisible, theme])
+    // `value` is deliberately excluded: the mount effect seeds the document
+    // once and every subsequent edit flows through dispatch — depending on
+    // `value` would tear down and rebuild CodeMirror on each keystroke. The
+    // hook setters are referentially stable and listed to keep the dependency
+    // array honest.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorVisible, theme, setAiError, setSelectionTool])
 
   useEffect(() => {
     const view = viewRef.current
@@ -813,17 +603,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         <div><span>Ln {status.line}, Col {status.column}</span>{status.selectedCharacters > 0 && <span>{status.selectedCharacters} selected · {status.selectedLines} lines</span>}</div>
         <div><span>{documentMetrics.lines} lines</span><span>{documentMetrics.words} words</span><span>{documentMetrics.characters} characters</span><output className={`save-status is-${saveStatus}`}>{saveStatus === 'saving' ? <><LoaderCircle className="is-spinning" size={12} /> Saving…</> : saveStatus === 'conflict' ? 'Save conflict' : saveStatus === 'offline' ? 'Offline — changes pending' : <><Check size={12} /> Saved to cloud</>}</output><button onClick={onReset}><RotateCcw size={12} /> Reset</button></div>
       </div>
-      {selectionTool && <div className="selection-ai-tool" role="toolbar" aria-label="Selection tools" tabIndex={-1} style={{ left: selectionTool.left, top: selectionTool.top }} onMouseDown={(event) => event.preventDefault()}>
-        <button onClick={() => void makeSelectionBullets('flat')} disabled={Boolean(aiBusy) || selectionTool.text.length > 12000} title={selectionTool.text.length > 12000 ? 'Select no more than 12,000 characters' : 'Rewrite selection as flat Markdown bullets with Workers AI'}>
-          {aiBusy === 'flat' ? <LoaderCircle className="is-spinning" size={15} /> : <Sparkles size={15} />}
-          {aiBusy === 'flat' ? 'Making bullets…' : 'Make bullets'}
-        </button>
-        <button onClick={() => void makeSelectionBullets('nested')} disabled={Boolean(aiBusy) || selectionTool.text.length > 12000} title="Rewrite selection as a two-level Markdown list">{aiBusy === 'nested' ? <LoaderCircle className="is-spinning" size={15} /> : <ListTree size={15} />}{aiBusy === 'nested' ? 'Nesting…' : 'Nested bullets'}</button>
-        <button onClick={makeSelectionColumns} title="Arrange the selection as two responsive columns"><Columns2 size={15} />Two columns</button>
-        <span>{selectionTool.text.length.toLocaleString()}</span>
-        <button className="selection-tool-close" onClick={() => setSelectionTool(null)} aria-label="Close selection tool"><X size={14} /></button>
-        {aiError && <small>{aiError}</small>}
-      </div>}
+      {selectionTool && <SelectionToolbar state={selectionTool} aiBusy={aiBusy} aiError={aiError} onBullets={(mode) => void makeSelectionBullets(mode)} onColumns={makeSelectionColumns} onClose={() => setSelectionTool(null)} />}
       {imageTool && <FigureDialog
         state={imageTool}
         documentId={documentId}
@@ -831,47 +611,10 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         onCancel={() => { closeImageTool(); viewRef.current?.focus() }}
         onSave={saveImageSyntax}
       />}
-      {!!imageUploads.length && <div className="image-upload-stack" aria-live="polite">
-        {imageUploads.map((upload) => <div key={upload.id} className={`image-upload-toast is-${upload.status}`}>
-          <span className="upload-icon">{upload.status === 'uploading' ? <LoaderCircle size={16} /> : upload.status === 'complete' ? <Check size={16} /> : <X size={16} />}</span>
-          <span><strong>{upload.status === 'uploading' ? 'Uploading image' : upload.status === 'complete' ? 'Image ready' : 'Upload failed'}</strong><small>{upload.message || upload.name}</small></span>
-          {upload.status === 'error' && <button onClick={() => dismissUpload(upload.id)} aria-label="Dismiss upload error"><X size={14} /></button>}
-        </div>)}
-      </div>}
+      <ImageUploadToasts uploads={imageUploads} onDismiss={dismissUpload} />
       {showOpenEvidenceImport && <OpenEvidenceImportDialog onClose={() => setShowOpenEvidenceImport(false)} onInsert={insertImportedMarkdown} />}
-      {tableImport && createPortal(<div className="table-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setTableImport(null)}>
-        <dialog open className="table-import-dialog" aria-modal="true" aria-labelledby="table-import-title">
-          <header><div><Sheet size={18} /><div><small>Smart paste</small><h2 id="table-import-title">Import table</h2></div></div><button onClick={() => setTableImport(null)} aria-label="Close table import"><X size={18} /></button></header>
-          <div className="table-import-body">
-            <label><span>Paste from Word, Excel, CSV, or TSV</span><textarea autoFocus value={tableImport.source} onChange={(event) => setTableImport((current) => current ? { ...current, source: event.target.value, html: '' } : current)} onPaste={(event) => {
-              const html = event.clipboardData.getData('text/html')
-              const plain = event.clipboardData.getData('text/plain')
-              if (!html && !plain) return
-              event.preventDefault()
-              setTableImport((current) => current ? { ...current, source: plain, html } : current)
-            }} placeholder={'Name,Value\nAlpha,42\nBeta,18'} /></label>
-            <div className="table-import-detection"><span className={detectedTable.format ? 'is-detected' : ''}>{detectedTable.format ? `${detectedTable.format} detected` : 'Waiting for tabular data'}</span>{detectedTable.rows.length > 0 && <small>{detectedTable.rows.length} rows · {Math.max(...detectedTable.rows.map((row) => row.length))} columns</small>}</div>
-            <div className="table-import-preview">{detectedTable.rows.length ? <table><tbody>{detectedTable.rows.slice(0, 8).map((row, rowIndex) => <tr key={rowIndex}>{row.map((cell, cellIndex) => rowIndex === 0 ? <th key={cellIndex}>{cell}</th> : <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table> : <div><Sheet size={22} /><span>Your table preview appears here.</span></div>}</div>
-          </div>
-          <footer><span>Format is detected automatically.</span><div><button onClick={() => setTableImport(null)}>Cancel</button><button className="table-import-primary" onClick={insertImportedTable} disabled={!markdownTableFromRows(detectedTable.rows)}>Insert Markdown table</button></div></footer>
-        </dialog>
-      </div>, document.body)}
-      {citationImport && createPortal(<div className="citation-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setCitationImport(null)}>
-        <dialog open className="citation-import-dialog" aria-modal="true" aria-labelledby="citation-import-title">
-          <header><div><BookPlus size={18} /><div><small>AMA CSL</small><h2 id="citation-import-title">Insert citation</h2></div></div><button onClick={() => setCitationImport(null)} aria-label="Close citation import"><X size={18} /></button></header>
-          <div className="citation-import-body">
-            <label><span>DOI or PubMed ID</span><input autoFocus value={citationImport.identifier} onChange={(event) => setCitationImport((current) => current ? { ...current, identifier: event.target.value } : current)} placeholder="10.1016/j.chest.2024.09.016 or PMID: 28012456" /></label>
-            <div className={`citation-lookup-status is-${citationLookup.status}`}>
-              {citationLookup.status === 'idle' && <span>Paste a DOI, PMID, or PubMed article URL.</span>}
-              {citationLookup.status === 'loading' && <span><LoaderCircle className="is-spinning" size={14} /> Formatting with AMA CSL…</span>}
-              {citationLookup.status === 'error' && <span>{citationLookup.error}</span>}
-              {citationLookup.status === 'ready' && citationLookup.existingNumber !== undefined && <span><Check size={14} /> Already listed as [{citationLookup.existingNumber}]. The existing reference will be reused.</span>}
-              {citationLookup.status === 'ready' && citationLookup.existingNumber === undefined && <blockquote>{citationLookup.citation.replace(/^\s*\d+\.\s*/, '')}</blockquote>}
-            </div>
-          </div>
-          <footer><span>New references are appended without renumbering existing citations.</span><div><button onClick={() => setCitationImport(null)}>Cancel</button><button className="citation-import-primary" onClick={insertCitation} disabled={citationLookup.status !== 'ready'}>Insert [{citationLookup.existingNumber ?? 'n'}]</button></div></footer>
-        </dialog>
-      </div>, document.body)}
+      {tableImport && <TableImportDialog state={tableImport} detected={detectedTable} onChange={setTableImport} onClose={() => setTableImport(null)} onInsert={insertImportedTable} />}
+      {citationImport && <CitationImportDialog state={citationImport} lookup={citationLookup} onChange={setCitationImport} onClose={() => setCitationImport(null)} onInsert={insertCitation} />}
     </div>
   )
 }

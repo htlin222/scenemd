@@ -81,7 +81,7 @@ export function usePresentationRuntime(
     setPresenting(false)
     setBlank(null)
     if (document.fullscreenElement) void document.exitFullscreen()
-  }, [])
+  }, [setPresenting])
 
   useEffect(() => {
     if (!presenting) return
@@ -117,7 +117,7 @@ export function usePresentationRuntime(
     setPresenting(true)
     setRevealIndex(0)
     document.documentElement.requestFullscreen?.().catch(() => undefined)
-  }, [])
+  }, [setPresenting])
 
   useEffect(() => {
     const onShortcut = (event: KeyboardEvent) => {
