@@ -1,4 +1,5 @@
 import { canAccessDocument, requesterEmail } from './_lib/access'
+import { normalizeMarkdownWhitespace } from '../../worker/normalize'
 
 interface Env {
   DB: D1Database
@@ -302,7 +303,7 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     const body = await context.request.json<{ title?: string; markdown?: string; presentationConfig?: unknown }>()
     const documentId = crypto.randomUUID()
     const title = body.title?.trim() || 'Untitled document'
-    const markdown = body.markdown ?? `# ${title}\n\nStart writing…\n`
+    const markdown = typeof body.markdown === 'string' ? normalizeMarkdownWhitespace(body.markdown) : `# ${title}\n\nStart writing…\n`
     const now = new Date().toISOString()
     const ownerEmail = context.request.headers.get('Cf-Access-Authenticated-User-Email')
     const coverConfig = presentationConfig(body.presentationConfig, title)

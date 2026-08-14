@@ -40,6 +40,51 @@ export function editsOverlap(left: TextEdit, right: TextEdit): boolean {
 }
 
 /**
+ * A pure insertion or deletion whose text repeats the neighbouring content can
+ * anchor at several equivalent positions — inserting a line into a run of
+ * identical lines is the canonical case. changedSpan picks one anchor
+ * arbitrarily, so two racing saves of the same edit can end up with disjoint
+ * spans and both get applied, silently duplicating (or double-deleting) the
+ * repeated text. This computes the full range of equivalent anchors so such
+ * edits can be treated as conflicting. Replacements cannot slide: changedSpan
+ * trimming guarantees their boundaries mismatch the surrounding text.
+ */
+function slideZone(base: string, edit: TextEdit) {
+  const removed = base.slice(edit.start, edit.end)
+  const pattern = removed.length === 0 ? edit.insert : edit.insert.length === 0 ? removed : ''
+  if (!pattern) return { ...edit, pattern, min: edit.start, max: edit.end, widened: false }
+  const period = pattern.length
+  let min = edit.start
+  for (let k = 0; min > 0 && base[min - 1] === pattern[period - 1 - (k % period)]; k += 1) min -= 1
+  let max = edit.end
+  for (let k = 0; max < base.length && base[max] === pattern[k % period]; k += 1) max += 1
+  return { ...edit, pattern, min, max, widened: min < edit.start || max > edit.end }
+}
+
+type Zone = ReturnType<typeof slideZone>
+
+/**
+ * When a slide zone only touches the other edit's span, the merge is still
+ * safe as long as the ambiguity stops at the boundary: every anchor yields the
+ * same result. It stays ambiguous only if the repeated pattern continues into
+ * the text the neighbouring edit leaves at that boundary — then the same
+ * final document could be produced by two different attributions.
+ */
+function ambiguousTouch(base: string, zone: Zone, other: TextEdit): boolean {
+  if (!zone.widened) return false
+  const period = zone.pattern.length
+  if (other.end === zone.min && zone.min < zone.start) {
+    const before = other.insert ? other.insert[other.insert.length - 1] : base[other.start - 1]
+    return before === zone.pattern[period - 1 - ((zone.start - zone.min) % period)]
+  }
+  if (other.start === zone.max && zone.max > zone.end) {
+    const after = other.insert ? other.insert[0] : base[other.end]
+    return after === zone.pattern[(zone.max - zone.end) % period]
+  }
+  return false
+}
+
+/**
  * Merge the common autosave case: each client changed one contiguous span of
  * the same base document. Ambiguous overlapping edits remain a real conflict
  * and must be resolved by the author.
@@ -53,6 +98,12 @@ export function mergeMarkdown(base: string, local: string, cloud: string): strin
   if (!localEdit) return cloud
   if (!cloudEdit) return local
   if (editsOverlap(localEdit, cloudEdit)) return null
+  const localZone = slideZone(base, localEdit)
+  const cloudZone = slideZone(base, cloudEdit)
+  if ((localZone.widened || cloudZone.widened) && localZone.min < cloudZone.max && cloudZone.min < localZone.max) {
+    return null
+  }
+  if (ambiguousTouch(base, localZone, cloudEdit) || ambiguousTouch(base, cloudZone, localEdit)) return null
   const edits = [localEdit, cloudEdit].sort((left, right) => right.start - left.start)
   return edits.reduce((result, edit) => `${result.slice(0, edit.start)}${edit.insert}${result.slice(edit.end)}`, base)
 }

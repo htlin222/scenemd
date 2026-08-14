@@ -110,6 +110,51 @@ describe('mergeMarkdown', () => {
     expect(mergeMarkdown('', '', 'cloud text')).toBe('cloud text')
   })
 
+  it('refuses to merge an insertion that is ambiguous against identical neighbouring text', () => {
+    // Two racing autosaves from the same editing session: the cloud save added
+    // a whitespace-only line inside the references, the stale local save
+    // contains that same line plus later typing. The insertion could anchor
+    // anywhere inside the identical whitespace run, so applying both edits
+    // silently duplicates the line — this must be a conflict instead.
+    const base = 'Body.\n\n### References\n1. Kelly.\n        \n2. Risitano.\n'
+    const cloud = 'Body.\n\n### References\n1. Kelly.\n        \n        \n2. Risitano.\n'
+    const local = 'Body.X\n\n### References\n1. Kelly.\n        \n        \n2. Risitano.\n'
+
+    expect(mergeMarkdown(base, local, cloud)).toBeNull()
+  })
+
+  it('refuses to merge a deletion that is ambiguous against identical neighbouring text', () => {
+    // Deleting one of two identical lines while the other session edits next
+    // to the run: applying both spans would delete both copies.
+    const base = 'A\ndup\ndup\nB\n'
+    const cloud = 'A\ndup\nB\n'
+    const local = 'A!\ndup\nB\n'
+
+    expect(mergeMarkdown(base, local, cloud)).toBeNull()
+  })
+
+  it('merges an append at the end of the document with an edit to the last line', () => {
+    // The appended text's slide zone touches (but does not enter) the other
+    // edit's span, and the neighbouring insert does not continue the repeated
+    // pattern — every anchor yields the same result, so this must merge.
+    const base = '# Doc\n\nIntro.\n\nfoo\n'
+    const local = '# Doc\n\nIntro.\n\nbar\n'
+    const cloud = '# Doc\n\nIntro.\n\nfoo\n\nAppended paragraph.\n'
+
+    expect(mergeMarkdown(base, local, cloud)).toBe('# Doc\n\nIntro.\n\nbar\n\nAppended paragraph.\n')
+  })
+
+  it('still merges unambiguous edits that merely share a boundary character', () => {
+    // The ambiguity check must not regress ordinary far-apart edits.
+    const local = BASE.replace('# Title', '# Retitled')
+    const cloud = `${BASE}\nAppended remotely.\n`
+
+    const merged = mergeMarkdown(BASE, local, cloud)
+
+    expect(merged).toContain('# Retitled')
+    expect(merged).toContain('Appended remotely.')
+  })
+
   it('never returns a document missing content both sides kept', () => {
     const local = `${BASE}\nAppended locally.\n`
     const cloud = BASE.replace('# Title', '# Retitled')
