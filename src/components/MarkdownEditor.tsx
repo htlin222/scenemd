@@ -56,6 +56,7 @@ import {
 import { formatImageAttributes, imageFilterCss, parseImageAttributes, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
 import { remarkFoldImageAttributes } from '../lib/imageAttributesMdast'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
+import { FigureDialog } from './FigureDialog'
 import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
 import { minimalDocChange } from '../lib/minimalChange'
 import { imageParagraphReplacement, readImageLegend } from '../lib/legendText'
@@ -828,17 +829,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     view.focus()
   }
 
-  useEffect(() => {
-    if (!imageTool) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      closeImageTool()
-      viewRef.current?.focus()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [imageTool])
+  // Escape handling for the figure dialog lives inside FigureDialog itself.
 
   useEffect(() => {
     if (!hostRef.current || !editorVisible) return
@@ -1097,25 +1088,13 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         <button className="selection-tool-close" onClick={() => setSelectionTool(null)} aria-label="Close selection tool"><X size={14} /></button>
         {aiError && <small>{aiError}</small>}
       </div>}
-      {imageTool && <aside className="image-syntax-popover" style={{ left: imageTool.left, top: imageTool.top }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} aria-label="Image options">
-        <header><div><Image size={16} /><strong>Image</strong><span>Marpit syntax</span></div><button onClick={() => { closeImageTool(); viewRef.current?.focus() }} aria-label="Close image options"><X size={15} /></button></header>
-        <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: imageTool.options.fit === 'auto' ? 'scale-down' : 'contain', filter: imageFilterCss(imageTool.options.filters) }} /></div>
-        <div className="image-syntax-fields">
-          <label className="image-field-wide"><span>Image URL</span><input value={imageTool.url} onChange={(event) => updateImageDraft({ url: event.target.value })} /></label>
-          <label className="image-field-wide"><span>Alt text</span><input value={imageTool.options.alt} onChange={(event) => updateImageDraft({ alt: event.target.value })} placeholder="Describe this image" /></label>
-          <label className="image-field-wide"><span>Legend text</span><textarea rows={2} value={imageTool.legend} disabled={!imageTool.legendEditable} onChange={(event) => updateImageDraft({ legend: event.target.value })} placeholder="Text shown beside the figure" title={imageTool.legendEditable ? 'Saved into the same paragraph as the image' : 'This image shares its paragraph with other content, so the legend cannot be edited here'} /></label>
-          <label><span>Size (scene %)</span><input value={imageTool.options.size} onChange={(event) => updateImageDraft({ size: event.target.value })} placeholder="e.g. 45%" title="Fraction of the scene height the figure occupies; makes pagination deterministic" /></label>
-          <label><span>Width</span><input value={imageTool.options.width} onChange={(event) => updateImageDraft({ width: event.target.value })} placeholder="e.g. 480px" /></label>
-          <label><span>Height</span><input value={imageTool.options.height} onChange={(event) => updateImageDraft({ height: event.target.value })} placeholder="e.g. 280px" /></label>
-          <label><span>Scaling</span><select value={imageTool.options.fit} onChange={(event) => updateImageDraft({ fit: event.target.value as MarpitImageOptions['fit'] })}><option value="contain">Fit · no crop</option><option value="auto">Natural size</option></select></label>
-          <label><span>Layout</span><select value={imageTool.options.layout} onChange={(event) => updateImageDraft({ layout: event.target.value as MarpitImageOptions['layout'] })}><option value="legend">Image left · legend right</option><option value="auto">Automatic flow</option><option value="hero">Hero image</option></select></label>
-          <label><span>Background side</span><select value={imageTool.options.side} disabled={!imageTool.options.background} onChange={(event) => updateImageDraft({ side: event.target.value as MarpitImageOptions['side'] })}><option value="none">Full</option><option value="left">Left</option><option value="right">Right</option></select></label>
-          <label className="image-field-check"><input type="checkbox" checked={imageTool.options.background} onChange={(event) => updateImageDraft({ background: event.target.checked })} /><span>Scene background</span></label>
-          <label><span>Split size</span><input disabled={!imageTool.options.background || imageTool.options.side === 'none'} value={imageTool.options.splitSize} onChange={(event) => updateImageDraft({ splitSize: event.target.value })} placeholder="50%" /></label>
-          <label className="image-field-wide"><span>Filters</span><input value={imageTool.options.filters} onChange={(event) => updateImageDraft({ filters: event.target.value })} placeholder="brightness:.8 sepia:50%" /></label>
-        </div>
-        <footer className="image-syntax-actions"><button onClick={() => { closeImageTool(); viewRef.current?.focus() }}>Cancel</button><button className="is-primary" onClick={saveImageSyntax} disabled={!imageTool.url.trim()}><Check size={15} /> Save</button></footer>
-      </aside>}
+      {imageTool && <FigureDialog
+        state={imageTool}
+        documentId={documentId}
+        onChange={updateImageDraft}
+        onCancel={() => { closeImageTool(); viewRef.current?.focus() }}
+        onSave={saveImageSyntax}
+      />}
       {!!imageUploads.length && <div className="image-upload-stack" aria-live="polite">
         {imageUploads.map((upload) => <div key={upload.id} className={`image-upload-toast is-${upload.status}`}>
           <span className="upload-icon">{upload.status === 'uploading' ? <LoaderCircle size={16} /> : upload.status === 'complete' ? <Check size={16} /> : <X size={16} />}</span>

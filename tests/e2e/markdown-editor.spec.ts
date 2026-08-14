@@ -30,18 +30,18 @@ test('keyboard cursor motion through image syntax does not open the popover', as
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
   await expect(page.locator('.markdown-statusbar')).toContainText('Ln 5,')
-  await expect(page.locator('.image-syntax-popover')).toHaveCount(0)
+  await expect(page.locator('.figure-dialog')).toHaveCount(0)
 })
 
 test('clicking inside image syntax opens the popover', async ({ page }) => {
   await page.locator('.cm-line', { hasText: '![First figure]' }).click({ position: { x: 40, y: 16 } })
-  await expect(page.locator('.image-syntax-popover')).toBeVisible()
-  await expect(page.locator('.image-syntax-popover')).toContainText('Marpit syntax')
+  await expect(page.locator('.figure-dialog')).toBeVisible()
+  await expect(page.locator('.figure-dialog')).toContainText('Figure')
 })
 
 test('the popover reads and rewrites the same-paragraph legend', async ({ page }) => {
   await page.locator('.cm-line', { hasText: '![Second figure]' }).click({ position: { x: 40, y: 16 } })
-  const popover = page.locator('.image-syntax-popover')
+  const popover = page.locator('.figure-dialog')
   await expect(popover).toBeVisible()
 
   const legendField = popover.getByLabel('Legend text')
@@ -59,20 +59,40 @@ test('the popover reads and rewrites the same-paragraph legend', async ({ page }
 
 test('the popover round-trips hybrid attribute syntax', async ({ page }) => {
   await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
-  const popover = page.locator('.image-syntax-popover')
+  const popover = page.locator('.figure-dialog')
   await expect(popover).toBeVisible()
 
   // Bracket text is verbatim alt; config comes from the {…} block; the legend
   // excludes the attribute block.
   await expect(popover.getByLabel('Alt text')).toHaveValue('Hybrid chart')
-  await expect(popover.getByLabel('Width')).toHaveValue('40%')
   await expect(popover.getByLabel('Legend text')).toHaveValue('Hybrid legend text.')
 
+  await popover.locator('summary', { hasText: 'Advanced' }).click()
+  await expect(popover.getByLabel('Width')).toHaveValue('40%')
   await popover.getByLabel('Width').fill('55%')
   await popover.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText(
     '![Hybrid chart](https://img.test/three.png){width=55%} Hybrid legend text.',
   )
+})
+
+test('dragging the size handle on the canvas writes a size attribute', async ({ page }) => {
+  await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
+  const dialog = page.locator('.figure-dialog')
+  await expect(dialog).toBeVisible()
+
+  const canvas = await dialog.locator('.figure-dialog-canvas').boundingBox()
+  const handle = await dialog.locator('.figure-size-handle').boundingBox()
+  expect(canvas && handle).toBeTruthy()
+  const startX = handle!.x + handle!.width / 2
+  const startY = handle!.y + handle!.height / 2
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX, startY + canvas!.height * 0.2, { steps: 5 })
+  await page.mouse.up()
+
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('.cm-content')).toContainText(/\{size=7\d% width=40%\}/)
 })
 
 test('an external value update keeps the cursor where it was', async ({ page }) => {
