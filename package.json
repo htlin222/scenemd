@@ -23,6 +23,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:watch": "vitest",
+    "smoke": "node tools/browser-check.mjs",
     "preview": "vite preview",
     "deploy:live": "wrangler deploy -c worker/wrangler.jsonc",
     "deploy": "npm run build && npm run deploy:live && wrangler pages deploy dist --project-name=scenemd --branch=main",

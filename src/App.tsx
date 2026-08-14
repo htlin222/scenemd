@@ -22,9 +22,11 @@ import {
   PanelRight,
   Palette,
   Play,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   Share2,
   SquareLibrary,
   Sun,
@@ -44,6 +46,7 @@ import { buildSemanticRegions, parsePresentationDocument } from './engine/semant
 import { planScenes, withPresentationCover } from './engine/planner'
 import type { Density, PresentationBlock, PresentationConfig, Scene, ScenePlan, SourceRange, ThemeMode } from './engine/types'
 import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
+import { downloadBlob, exportFileName } from './export'
 
 const DEMO_MARKDOWN = `# Acute Myeloid Leukemia
 
@@ -182,6 +185,64 @@ interface SaveConflictState {
   localConfig: PresentationConfig
 }
 
+interface ConflictBackup {
+  markdown: string
+  at: string
+}
+
+// A conflicting save must never silently lose the author's text (#12). The
+// losing side is stashed here the moment a 409 arrives, so it survives
+// "Use cloud version", a tab crash, and a reload.
+const conflictBackupKey = (documentId: string) => `scenemd-conflict:${documentId}`
+
+function stashConflictBackup(documentId: string, markdown: string): void {
+  try {
+    localStorage.setItem(conflictBackupKey(documentId), JSON.stringify({ markdown, at: new Date().toISOString() } satisfies ConflictBackup))
+  } catch {
+    // Storage full or unavailable — the dialog's copy/download buttons remain.
+  }
+}
+
+function readConflictBackup(documentId: string): ConflictBackup | null {
+  try {
+    const raw = localStorage.getItem(conflictBackupKey(documentId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as ConflictBackup
+    return typeof parsed.markdown === 'string' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function clearConflictBackup(documentId: string): void {
+  try {
+    localStorage.removeItem(conflictBackupKey(documentId))
+  } catch {
+    // Nothing to do.
+  }
+}
+
+/**
+ * Trim the common prefix and suffix and return the differing middles with a
+ * little context, so the conflict dialog can show what actually diverged
+ * instead of two line counts.
+ */
+function conflictExcerpts(local: string, remote: string): { local: string; remote: string } {
+  let start = 0
+  const limit = Math.min(local.length, remote.length)
+  while (start < limit && local[start] === remote[start]) start += 1
+  let localEnd = local.length
+  let remoteEnd = remote.length
+  while (localEnd > start && remoteEnd > start && local[localEnd - 1] === remote[remoteEnd - 1]) {
+    localEnd -= 1
+    remoteEnd -= 1
+  }
+  const context = 80
+  const from = Math.max(0, start - context)
+  const clip = (source: string, end: number) => `${from > 0 ? '…' : ''}${source.slice(from, Math.min(source.length, end + context))}${end + context < source.length ? '…' : ''}`
+  return { local: clip(local, localEnd), remote: clip(remote, remoteEnd) }
+}
+
 interface DeployVersion {
   deployedAt?: string
 }
@@ -313,6 +374,7 @@ function App() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [saveConflict, setSaveConflict] = useState<SaveConflictState | null>(null)
+  const [conflictBackup, setConflictBackup] = useState<ConflictBackup | null>(null)
   const [newerDeployTime, setNewerDeployTime] = useState<string | null>(null)
   const [refreshingDeploy, setRefreshingDeploy] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -332,6 +394,10 @@ function App() {
   const [showExport, setShowExport] = useState(false)
   const [showPresentationSettings, setShowPresentationSettings] = useState(false)
   const [showHackMDSync, setShowHackMDSync] = useState(false)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const [rowBusyId, setRowBusyId] = useState<string | null>(null)
   const [hackMDSyncing, setHackMDSyncing] = useState(false)
   const [directHeaderCount, setDirectHeaderCount] = useState(() => directHeaderActionCount(window.innerWidth))
   const [headerOverflowOpen, setHeaderOverflowOpen] = useState(false)
@@ -551,6 +617,11 @@ function App() {
           lastSavedPresentationConfigRef.current = JSON.stringify(config)
           lastSavedMarkdownRef.current = result.markdown
           setSaveStatus('saved')
+          if (route.kind === 'document') {
+            const backup = readConflictBackup(route.id)
+            if (backup && backup.markdown !== loadedMarkdown) setConflictBackup(backup)
+            else if (backup) clearConflictBackup(route.id)
+          }
         }
       } catch (error) {
         if (!controller.signal.aborted) setApiError(error instanceof Error ? error.message : 'Something went wrong')
@@ -582,6 +653,7 @@ function App() {
         if (response.status === 409) {
           if (result.document) {
             const localMarkdown = liveMarkdownRef.current
+            stashConflictBackup(route.id, localMarkdown)
             setSaveConflict({
               remote: result.document,
               localMarkdown,
@@ -874,6 +946,49 @@ function App() {
     setShowPreview(true)
   }
 
+  const renameDocument = async (documentId: string) => {
+    const title = renameDraft.trim()
+    const previous = documents.find((entry) => entry.id === documentId)
+    setRenamingId(null)
+    if (!title || title === previous?.title) return
+    setRowBusyId(documentId)
+    setApiError(null)
+    try {
+      // rename: true also rewrites the document's leading H1, because the
+      // title follows the H1 and would otherwise revert on the next autosave.
+      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title, rename: true }),
+      })
+      const result = await response.json() as DocumentPayload & { error?: string }
+      if (!response.ok) throw new Error(result.error || 'Could not rename document')
+      setDocuments((current) => current.map((entry) => entry.id === documentId ? { ...entry, title: result.title, revision: result.revision, updatedAt: result.updatedAt ?? entry.updatedAt } : entry))
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Could not rename document')
+    } finally {
+      setRowBusyId(null)
+    }
+  }
+
+  const deleteDocument = async (documentId: string) => {
+    setConfirmingDeleteId(null)
+    setRowBusyId(documentId)
+    setApiError(null)
+    try {
+      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' })
+      if (!response.ok && response.status !== 404) {
+        const result = await response.json().catch(() => ({})) as { error?: string }
+        throw new Error(result.error || 'Could not delete document')
+      }
+      setDocuments((current) => current.filter((entry) => entry.id !== documentId))
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : 'Could not delete document')
+    } finally {
+      setRowBusyId(null)
+    }
+  }
+
   const createDocument = async () => {
     setCreating(true)
     setApiError(null)
@@ -944,11 +1059,13 @@ function App() {
       const result = await response.json() as DocumentPayload & { error?: string }
       if (response.status === 409) {
         const remote = (result as DocumentPayload & { document?: DocumentPayload }).document
+        stashConflictBackup(route.id, conflict.localMarkdown)
         if (remote) setSaveConflict((current) => current ? { ...current, remote } : current)
         setSaveStatus('conflict')
         return
       }
       if (!response.ok) throw new Error(result.error || 'Could not save your version')
+      clearConflictBackup(route.id)
       const savedMarkdown = absoluteSceneImageUrls(result.markdown)
       const savedConfig = normalizePresentationConfig(result.presentationConfig, result.title)
       lastSavedMarkdownRef.current = savedMarkdown
@@ -1037,13 +1154,28 @@ function App() {
             <div className="library-heading"><div><h2 id="documents-title">Files</h2><span>{filteredDocuments.length} documents</span></div><label className="document-search"><Search size={16} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search documents" aria-label="Search documents" /></label></div>
             {apiError && <div className="api-message is-error">{apiError}</div>}
             {loading ? <div className="document-empty">Loading your documents…</div> : filteredDocuments.length ? <div className="document-list">
-              {filteredDocuments.map((document) => <button key={document.id} className="document-row" onClick={() => navigate(`/document/${document.id}`)}>
-                <span className="document-icon"><FileText size={19} /></span>
-                <span className="document-name"><strong>{document.title}</strong><small><Clock3 size={12} /> Updated {formatUpdated(document.updatedAt)}</small></span>
-                {document.shared && <span className="shared-badge"><Link2 size={12} /> Shared</span>}
-                <span className="document-revision">v{document.revision}</span>
-                <ArrowRight size={17} />
-              </button>)}
+              {filteredDocuments.map((document) => <div key={document.id} className={`document-row-wrap${rowBusyId === document.id ? ' is-busy' : ''}`}>
+                {renamingId === document.id ? <form className="document-row document-rename" onSubmit={(event) => { event.preventDefault(); void renameDocument(document.id) }}>
+                  <span className="document-icon"><FileText size={19} /></span>
+                  <input value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => event.key === 'Escape' && setRenamingId(null)} aria-label={`Rename ${document.title}`} ref={(node) => node?.focus()} />
+                  <button type="submit" className="row-action" aria-label="Save name"><Check size={15} /></button>
+                  <button type="button" className="row-action" onClick={() => setRenamingId(null)} aria-label="Cancel rename"><X size={15} /></button>
+                </form> : <>
+                  <button className="document-row" onClick={() => navigate(`/document/${document.id}`)} disabled={rowBusyId === document.id}>
+                    <span className="document-icon"><FileText size={19} /></span>
+                    <span className="document-name"><strong>{document.title}</strong><small><Clock3 size={12} /> Updated {formatUpdated(document.updatedAt)}</small></span>
+                    {document.shared && <span className="shared-badge"><Link2 size={12} /> Shared</span>}
+                    <span className="document-revision">v{document.revision}</span>
+                    <ArrowRight size={17} />
+                  </button>
+                  <span className="document-row-actions">
+                    <button className="row-action" onClick={() => { setRenamingId(document.id); setRenameDraft(document.title); setConfirmingDeleteId(null) }} aria-label={`Rename ${document.title}`} disabled={rowBusyId === document.id}><Pencil size={15} /></button>
+                    {confirmingDeleteId === document.id
+                      ? <button className="row-action is-danger is-confirming" onClick={() => void deleteDocument(document.id)} onBlur={() => setConfirmingDeleteId(null)} aria-label={`Confirm deleting ${document.title}`} disabled={rowBusyId === document.id}>Delete?</button>
+                      : <button className="row-action is-danger" onClick={() => setConfirmingDeleteId(document.id)} aria-label={`Delete ${document.title}`} disabled={rowBusyId === document.id}><Trash2 size={15} /></button>}
+                  </span>
+                </>}
+              </div>)}
             </div> : <div className="document-empty"><Files size={28} /><strong>No documents yet</strong><span>Create your first Markdown document to begin.</span><button onClick={() => void createDocument()}><Plus size={15} /> New document</button></div>}
           </section>
         </main>
@@ -1113,14 +1245,30 @@ function App() {
       {saveConflict && <div className="save-conflict-backdrop" role="presentation"><aside className="save-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title">
         <div className="save-conflict-icon"><RefreshCw size={21} /></div>
         <h2 id="save-conflict-title">Two sessions edited this document</h2>
-        <p>SceneMD could not safely merge changes made to the same content. Your local Markdown is still in this editor.</p>
+        <p>SceneMD could not safely merge changes made to the same content. Your local Markdown is still in this editor, and a backup copy is kept on this device until the conflict is resolved.</p>
         <div className="save-conflict-meta"><span>Your copy</span><strong>{saveConflict.localMarkdown.split('\n').length} lines</strong><span>Cloud copy</span><strong>revision {saveConflict.remote.revision}</strong></div>
+        {(() => {
+          const excerpts = conflictExcerpts(saveConflict.localMarkdown, saveConflict.remote.markdown)
+          return <div className="save-conflict-diff">
+            <div><span>Your version</span><pre>{excerpts.local || '(empty)'}</pre></div>
+            <div><span>Cloud version</span><pre>{excerpts.remote || '(empty)'}</pre></div>
+          </div>
+        })()}
         <div className="save-conflict-actions">
           <button onClick={() => void navigator.clipboard.writeText(saveConflict.localMarkdown)}><Copy size={15} /> Copy my Markdown</button>
+          <button onClick={() => downloadBlob(new Blob([saveConflict.localMarkdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${saveConflict.localTitle} (my version)`, 'md'))}>Download .md</button>
           <button onClick={useCloudConflictVersion}>Use cloud version</button>
           <button className="is-primary" onClick={() => void keepLocalConflictVersion()}>Keep my version</button>
         </div>
       </aside></div>}
+
+      {conflictBackup && route.kind === 'document' && !saveConflict && <aside className="deploy-update-toast conflict-backup-toast" role="status" aria-live="polite">
+        <span className="deploy-update-icon"><Copy size={18} /></span>
+        <span className="deploy-update-copy"><strong>A backup from an unresolved conflict exists</strong><small>saved {new Date(conflictBackup.at).toLocaleString()} — it differs from the loaded document</small></span>
+        <button onClick={() => void navigator.clipboard.writeText(conflictBackup.markdown)}><Copy size={14} /> Copy</button>
+        <button onClick={() => downloadBlob(new Blob([conflictBackup.markdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${documentTitle} (conflict backup)`, 'md'))}>Download</button>
+        <button onClick={() => { clearConflictBackup(route.id); setConflictBackup(null) }}>Discard</button>
+      </aside>}
 
       {newerDeployTime && <aside className="deploy-update-toast" role="status" aria-live="polite">
         <span className="deploy-update-icon"><RefreshCw className={refreshingDeploy ? 'is-spinning' : ''} size={18} /></span>

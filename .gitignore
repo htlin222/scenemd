@@ -9,3 +9,4 @@ artifacts/
 *.tsbuildinfo
 test-results/
 playwright-report/
+worker/wrangler.smoke.generated.jsonc

@@ -503,8 +503,9 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
     if (block.type !== 'figure') return
     figureCount += 1
     block.figureNumber = figureCount
-    // Legacy hero (Marpit token, layout=hero, or present: hero) degrades to a
-    // full-height figure in the single v5 layout.
+    // Legacy hero (Marpit token, layout=hero, or present: hero — #28's
+    // directive fix is subsumed here) degrades to a full-height figure in the
+    // single v5 layout.
     if ((block.imageOptions?.layout === 'hero' || block.layoutHint === 'hero') && block.imageOptions && !block.imageOptions.size) {
       block.imageOptions.size = '100%'
     }

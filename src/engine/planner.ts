@@ -9,6 +9,13 @@ import type {
   SemanticRegion,
 } from './types'
 
+// Fixed cost per additional scene in the global pagination objective. A good
+// on-target scene scores roughly 150 and a mediocre half-empty one roughly
+// 110, so a boundary must recover more than this in combined score before
+// splitting beats keeping content together — without it, summing mostly
+// positive per-scene scores would reward shattering a region into thin scenes.
+const SCENE_COST = 140
+
 const DENSITY_TARGETS: Record<Density, { target: number; comfortable: number; maximum: number }> = {
   compact: { target: 0.78, comfortable: 0.84, maximum: 0.93 },
   balanced: { target: 0.65, comfortable: 0.75, maximum: 0.88 },
@@ -285,6 +292,14 @@ function makeScene(
   const first = blocks[0]
   const last = blocks[blocks.length - 1]
   const fillRatio = used / capacity
+  // spec: "unintentional hard overflow = 0". When content genuinely cannot
+  // fit — a single unsplittable block taller than the capacity — the overflow
+  // is intentional but must never be silent (#7). SceneView renders this.
+  const warning = fillRatio > 1
+    ? blocks.length === 1
+      ? `${first.type === 'figure' ? 'Image' : first.type === 'math' ? 'Display math' : first.type === 'table' ? 'Table' : 'This block'} is taller than the scene by ${Math.round((fillRatio - 1) * 100)}% and cannot be split`
+      : `Content overflows this scene by ${Math.round((fillRatio - 1) * 100)}%`
+    : undefined
   return {
     id: `scene-${hash(`${region.id}:${first.id}:${last.id}`)}`,
     role: first.type === 'heading' && first.depth === 1 ? 'chapter' : 'content',
@@ -301,7 +316,7 @@ function makeScene(
     fillRatio,
     score,
     scores,
-    warning: fillRatio > 1 ? 'Content exceeds this scene. Shrink the figure size, shorten the text, or split the group.' : undefined,
+    warning,
     figureTextScale: textScale,
     continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
@@ -355,45 +370,73 @@ export function planScenes(
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
     const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
     // A figure region IS the page the author delimited with `---` or a
-    // heading: it always becomes exactly one scene. Above-text shrinks to
-    // fit and a genuine overflow carries the warning — the scoring window
-    // never gets to slice a figure page apart (design v5).
-    if (plannedBlocks.some((block) => block.type === 'figure')
+    // heading: it becomes exactly one scene whenever it fits (above-text
+    // shrinks to help). A region that still cannot fit falls through to the
+    // partitioner so excess text flows out — 文讓步 — instead of producing a
+    // giant overflowing scene on arbitrary documents.
+    if ((plannedBlocks.some((block) => block.type === 'figure') && regionUsed <= capacity)
       || regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
       const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
       scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity)))
       continue
     }
 
-    // A scene boundary must never fall inside a `present: group`; advancing
-    // the window end past the whole group keeps groups atomic even when they
-    // are longer than the lookahead.
-    const pastGroup = (end: number): number => {
-      while (
-        end < plannedBlocks.length
-        && plannedBlocks[end - 1].groupId
-        && plannedBlocks[end].groupId === plannedBlocks[end - 1].groupId
-      ) end += 1
-      return end
-    }
-
-    let cursor = 0
-    while (cursor < plannedBlocks.length) {
-      const candidates: Array<ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }> = []
-      for (let end = pastGroup(cursor + 1); end <= plannedBlocks.length && candidates.length < 8; end = pastGroup(end + 1)) {
-        const candidateBlocks = plannedBlocks.slice(cursor, end)
+    // Globally optimal pagination over the region (#8). The previous greedy
+    // scan committed to the locally best boundary and never reconsidered it,
+    // which produced avoidable keep violations and orphaned headings whenever
+    // a good early break forced a bad late one. This is the Knuth-Plass shape
+    // of the same problem: score every feasible scene (start, end), then pick
+    // the partition maximizing the total score by dynamic programming.
+    //
+    // Candidates extend until they overflow, so the search window is derived
+    // from capacity rather than a fixed block count. A single-block candidate
+    // is always feasible — an unsplittable oversized block becomes its own
+    // warned scene (#7) instead of making the region unplannable.
+    //
+    // Per-scene scores are mostly positive, so maximizing their plain sum
+    // would reward fragmenting into many thin scenes. Each boundary therefore
+    // pays a fixed cost: a split must earn more than SCENE_COST in combined
+    // score to beat staying together, which is the sum-form of "prefer
+    // coherent under-filled scenes over crowded ones, but do not shatter".
+    //
+    // A boundary must never fall inside a `present: group`: those ends are
+    // simply not legal partition points.
+    const total = plannedBlocks.length
+    const insideGroup = (end: number): boolean =>
+      end > 0
+      && end < total
+      && Boolean(plannedBlocks[end - 1].groupId)
+      && plannedBlocks[end].groupId === plannedBlocks[end - 1].groupId
+    type Candidate = ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }
+    const bestScore = Array.from({ length: total + 1 }, () => 0)
+    const bestChoice = Array.from({ length: total + 1 }, (): Candidate | null => null)
+    for (let start = total - 1; start >= 0; start -= 1) {
+      if (insideGroup(start)) continue
+      let bestTotal = Number.NEGATIVE_INFINITY
+      let chosen: Candidate | null = null
+      for (let end = start + 1; end <= total; end += 1) {
+        if (insideGroup(end)) continue
+        const candidateBlocks = plannedBlocks.slice(start, end)
         const used = usedHeight(candidateBlocks, measurements, capacity)
-        candidates.push({
-          ...evaluate(candidateBlocks, end, plannedBlocks.length, used, capacity, density, previousEnds, plannedBlocks[end]),
-          blocks: candidateBlocks,
-          end,
-          used,
-        })
+        const evaluated = evaluate(candidateBlocks, end, total, used, capacity, density, previousEnds, plannedBlocks[end])
+        if (evaluated.invalid && chosen) break
+        const candidateTotal = evaluated.total + bestScore[end] - (end < total ? SCENE_COST : 0)
+        if (!evaluated.invalid || !chosen) {
+          if (candidateTotal > bestTotal || !chosen) {
+            bestTotal = candidateTotal
+            chosen = { ...evaluated, blocks: candidateBlocks, end, used }
+          }
+        }
+        if (used > capacity) break
       }
-      const valid = candidates.filter((candidate) => !candidate.invalid)
-      const winner = (valid.length ? valid : candidates).sort((a, b) => b.total - a.total)[0]
-      scenes.push(makeScene(planningRegion, winner.blocks, winner.used, capacity, winner.total, winner.breakdown, figureTextScale(winner.blocks, measurements, capacity)))
-      cursor = winner.end
+      bestScore[start] = bestTotal
+      bestChoice[start] = chosen
+    }
+    for (let start = 0; start < total; ) {
+      const choice = bestChoice[start]
+      if (!choice) break
+      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown, figureTextScale(choice.blocks, measurements, capacity)))
+      start = choice.end
     }
   }
 

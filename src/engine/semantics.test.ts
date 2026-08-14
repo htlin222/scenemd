@@ -263,9 +263,8 @@ describe('parsePresentationDocument — manual overrides', () => {
   })
 
   // design v5: hero is no longer a layout — all its spellings degrade to a
-  // full-height figure in the single figure layout. This also fixes #23: the
-  // `present: hero` directive used to be dead because the figure post-pass
-  // overwrote layoutHint; now it feeds the size mapping like the other forms.
+  // full-height figure in the single figure layout. Subsumes the #23/#28
+  // directive fix: `present: hero` feeds the size mapping like the others.
   it('applies present: hero as a full-height figure', () => {
     const blocks = parsePresentationDocument('<!-- present: hero -->\n\n![One](a.png)\n')
     const figure = blocks.find((block) => block.type === 'figure')

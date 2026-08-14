@@ -58,7 +58,8 @@ The planner prefers semantic integrity, readable typography, whitespace, and sta
 - Selection toolbar powered by Workers AI for prose-to-bullet conversion
 - OpenEvidence conversation import and pasted TSV-to-Markdown table conversion
 - Cloudflare D1 persistence and Durable Object edit coordination
-- Manual two-way HackMD pull/push/smart sync through a server-side secret
+- Document management from the library: rename (keeps the leading H1 in step) and delete with its uploaded images
+- Manual two-way HackMD pull/push/smart sync through a server-side secret, with one-click unlink
 - Read-only share links and Cloudflare Access protection for editing
 - Fullscreen keyboard presentation, step reveals, black/white screens, dark/light themes
 - Default, editorial, and Catppuccin themes in light and dark
@@ -191,6 +192,10 @@ npx wrangler secret put HACKMD_API -c worker/wrangler.jsonc
 ```
 
 For an edit-only access gate, create a Cloudflare Access application for the production hostname. Read-only links use unguessable share tokens, but you should choose an Access policy that matches your deployment’s intended sharing model.
+
+### Image hosting model
+
+Uploaded images are served as **capability URLs**: the path contains an unguessable UUID, anyone holding the URL can read the image, and responses are cached as immutable for a year. This is deliberate — read-only share viewers must load images without authenticating — but it means an image is only as private as its URL. Revoking a share link does not revoke images already referenced by it. Deleting a document deletes its uploaded images from R2.
 
 ## Project status
 

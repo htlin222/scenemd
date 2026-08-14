@@ -1,0 +1,42 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`corpus metrics > tracks the aggregate quality profile across the matrix 1`] = `
+{
+  "code-heavy.md": {
+    "averageFill": 0.46,
+    "scenes": 4,
+  },
+  "image-heavy.md": {
+    "averageFill": 0.59,
+    "scenes": 5,
+  },
+  "list-heavy.md": {
+    "averageFill": 0.39,
+    "scenes": 4,
+  },
+  "long-essay.md": {
+    "averageFill": 0.33,
+    "scenes": 6,
+  },
+  "math-heavy.md": {
+    "averageFill": 0.36,
+    "scenes": 5,
+  },
+  "medical-lecture.md": {
+    "averageFill": 0.29,
+    "scenes": 7,
+  },
+  "mixed-readme.md": {
+    "averageFill": 0.27,
+    "scenes": 7,
+  },
+  "short-essay.md": {
+    "averageFill": 0.19,
+    "scenes": 4,
+  },
+  "technical-doc.md": {
+    "averageFill": 0.24,
+    "scenes": 7,
+  },
+}
+`;

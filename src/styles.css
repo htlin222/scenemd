@@ -1050,3 +1050,24 @@ body { background: var(--surface); }
 .citation-import-dialog > header small,
 .bibliography-dialog > header small,
 .export-dialog > header small { font-size: 11px; }
+
+/* Conflict recovery (#12) */
+.save-conflict-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 4px; text-align: left; }
+.save-conflict-diff > div { min-width: 0; }
+.save-conflict-diff span { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; margin-bottom: 4px; }
+.save-conflict-diff pre { margin: 0; max-height: 130px; overflow: auto; padding: 8px; border-radius: 8px; background: color-mix(in srgb, currentColor 7%, transparent); font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.conflict-backup-toast button { flex-shrink: 0; }
+
+/* Document management: rename and delete (#39) */
+.document-row-wrap { position: relative; display: flex; align-items: stretch; }
+.document-row-wrap .document-row { flex: 1; min-width: 0; }
+.document-row-wrap.is-busy { opacity: 0.55; pointer-events: none; }
+.document-row-actions { display: flex; align-items: center; gap: 4px; padding: 0 4px; border-bottom: 1px solid var(--line); opacity: 0; transition: opacity 120ms ease; }
+.document-row-wrap:hover .document-row-actions, .document-row-wrap:focus-within .document-row-actions { opacity: 1; }
+.row-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 8px; color: var(--ink-muted, var(--ink)); background: transparent; }
+.row-action:hover { background: var(--surface-muted); color: var(--ink); }
+.row-action.is-danger:hover { color: #b3261e; background: color-mix(in srgb, #b3261e 12%, transparent); }
+.row-action.is-confirming { font-size: 12px; font-weight: 700; color: #b3261e; background: color-mix(in srgb, #b3261e 12%, transparent); }
+.document-rename { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+.document-rename input { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface, transparent); color: var(--ink); font: inherit; font-weight: 600; }
+.hackmd-unlink:hover { color: #b3261e; }
