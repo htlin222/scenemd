@@ -20,7 +20,7 @@ interface FigureDialogProps {
 
 function sizePercent(options: MarpitImageOptions): number {
   const match = options.size.match(/^(\d+(?:\.\d+)?)%$/)
-  return match ? Math.min(90, Math.max(15, Number(match[1]))) : 55
+  return match ? Math.min(100, Math.max(15, Number(match[1]))) : 55
 }
 
 export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: FigureDialogProps) {
@@ -47,7 +47,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
     const startY = event.clientY
     const startSize = size
     const onMove = (moveEvent: PointerEvent) => {
-      const next = Math.min(90, Math.max(15, startSize + ((moveEvent.clientY - startY) / canvasHeight) * 100))
+      const next = Math.min(100, Math.max(15, startSize + ((moveEvent.clientY - startY) / canvasHeight) * 100))
       onChange({ size: `${Math.round(next)}%` })
     }
     const onEnd = () => {

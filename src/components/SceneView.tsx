@@ -352,7 +352,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
         {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
         {scene.layout === 'legend' ? (
-          <div className="legend-grid">
+          <div className={`legend-grid${visibleFigures.some((figure) => figure.imageOptions?.size) ? ' is-sized' : ''}`}>
             <div className="legend-media">{renderBlocks(visibleFigures)}</div>
             <div className="legend-copy">
               {renderBlocks(prose)}

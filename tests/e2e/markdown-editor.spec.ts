@@ -95,6 +95,25 @@ test('dragging the size handle on the canvas writes a size attribute', async ({ 
   await expect(page.locator('.cm-content')).toContainText(/\{size=7\d% width=40%\}/)
 })
 
+test('the size handle drags all the way to full bleed', async ({ page }) => {
+  await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
+  const dialog = page.locator('.figure-dialog')
+  await expect(dialog).toBeVisible()
+
+  const canvas = await dialog.locator('.figure-dialog-canvas').boundingBox()
+  const handle = await dialog.locator('.figure-size-handle').boundingBox()
+  const startX = handle!.x + handle!.width / 2
+  const startY = handle!.y + handle!.height / 2
+  await page.mouse.move(startX, startY)
+  await page.mouse.down()
+  await page.mouse.move(startX, startY + canvas!.height * 1.2, { steps: 5 })
+  await page.mouse.up()
+  await expect(dialog.locator('.figure-size-handle')).toHaveText('100%')
+
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('.cm-content')).toContainText('{size=100% width=40%}')
+})
+
 test('an external value update keeps the cursor where it was', async ({ page }) => {
   await page.locator('.cm-line', { hasText: 'Legend two explains' }).click()
   await expect(page.locator('.markdown-statusbar')).toContainText('Ln 11,')

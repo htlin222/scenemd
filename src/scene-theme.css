@@ -328,6 +328,13 @@
 }
 .legend-media,
 .legend-copy { min-width: 0; min-height: 0; }
+/* When a figure declares size=NN%, its width follows the image's own aspect
+   ratio at that height — up to the full scene width — and the legend column
+   yields. The figure is the scene's first-class citizen; text gives way. */
+.legend-grid.is-sized { grid-template-columns: fit-content(100%) minmax(0, 1fr); }
+.legend-grid.is-sized .legend-media .block-figure { width: auto; }
+.legend-grid.is-sized .figure-frame { width: auto; }
+.legend-grid.is-sized .figure-frame img { width: auto; max-width: none; }
 .legend-media { display: flex; align-items: center; justify-content: center; }
 .legend-media .block-figure { width: 100%; }
 .legend-media .figure-frame { height: var(--figure-height, 31cqw); max-height: 32cqw; aspect-ratio: auto; background: transparent; }
