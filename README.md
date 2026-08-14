@@ -58,7 +58,8 @@ The planner prefers semantic integrity, readable typography, whitespace, and sta
 - Selection toolbar powered by Workers AI for prose-to-bullet conversion
 - OpenEvidence conversation import and pasted TSV-to-Markdown table conversion
 - Cloudflare D1 persistence and Durable Object edit coordination
-- Manual two-way HackMD pull/push/smart sync through a server-side secret
+- Document management from the library: rename (keeps the leading H1 in step) and delete with its uploaded images
+- Manual two-way HackMD pull/push/smart sync through a server-side secret, with one-click unlink
 - Read-only share links and Cloudflare Access protection for editing
 - Fullscreen keyboard presentation, step reveals, black/white screens, dark/light themes
 - Default, editorial, and Catppuccin themes in light and dark
