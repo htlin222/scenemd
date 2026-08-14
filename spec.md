@@ -251,7 +251,7 @@ AI never controls pagination and must preserve facts, numbers, qualifiers, citat
 
 - Cloudflare D1 stores documents, revisions, presentation configuration, shares, and integration metadata.
 - A Durable Object serializes document edits and rejects stale base revisions.
-- R2 stores uploaded images.
+- R2 stores uploaded images. Image URLs are capability URLs: unguessable, publicly readable, and cached immutably, because read-only share viewers must load them without authentication. Revoking a share does not revoke images already referenced; deleting the document deletes its images.
 - Cloudflare Access protects authoring routes for approved identities.
 - Read-only shares use unguessable tokens.
 - HackMD and Cloudflare credentials are Worker or repository secrets and never reach the browser or source control.
