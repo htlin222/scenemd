@@ -119,6 +119,45 @@ must-share-the-scene.
   never evicted; that state is an authoring error surfaced to the author.
 - Ungrouped text flows freely across scenes (text yields, as before).
 
+## v5 — one figure layout, position decides text roles (2026-08-14)
+
+The author found figure-neighbor interactions unpredictable and forced the
+question: figure pages now have exactly ONE structure. The legend layout,
+text-media, media-dominant, and hero/bg layouts are all retired.
+
+The canonical figure page (`---` or a heading cuts pages):
+
+```markdown
+段落（前頁）
+
+---
+段落 ← 內文，右欄（塞不下就縮字，下限 0.6，再不行才 overflow 警告）
+
+![alt](url){size=45%} ← 圖，左欄；點圖唯一用途＝拖大小
+
+段落 ← legend，渲染在圖下方（自動與圖同場景）
+```
+
+- **Structure**: optional heading on top; below it two columns — figure left
+  (caption under it, Fig. N badge), body text right.
+- **Position decides roles**: prose above the figure = body (right column);
+  every consecutive paragraph below the figure = legend (under the image,
+  kept with it). Same-paragraph and Quarto captions render there too.
+- **size basis**: `size=NN%` is a fraction of the figure column — the height
+  remaining under the heading. The frame resolves it as a CSS percentage and
+  may yield at most 25% to its captions; the planner mirrors both rules, so
+  plan and pixels cannot drift.
+- **Above text shrinks to fit** ("縮小文字，總之塞就對了"): the planner
+  computes `figureTextScale = available/height` (floor 0.6) per scene and the
+  text column applies it; below the floor the scene overflows with a warning.
+- **Dialog**: the figure dialog edits only the figure (size drag, URL, alt,
+  replace, advanced fit/filter). Captions are edited as ordinary markdown;
+  same-paragraph captions round-trip untouched through a dialog save.
+- **hero/bg retirement**: every hero spelling (Marpit token, `layout=hero`,
+  `present: hero` — fixing the dead-directive bug #23) maps to `size=100%`;
+  `bg`/`side`/`split` still parse and format losslessly but no longer alter
+  rendering.
+
 ## v4 — HackMD reveal.js downward compatibility (2026-08-14)
 
 The syntax must degrade gracefully in both directions with HackMD's

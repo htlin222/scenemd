@@ -777,11 +777,6 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       const { url: _patchUrl, legend: _patchLegend, ...optionPatch } = patch
       const nextOptions = { ...current.options, ...optionPatch }
       if (nextOptions.fit === 'cover') nextOptions.fit = 'contain'
-      if (patch.layout === 'legend') {
-        nextOptions.background = false
-        nextOptions.side = 'none'
-      }
-      if (patch.background === true) nextOptions.layout = 'auto'
       const next = { ...current, url: patch.url ?? current.url, legend: patch.legend ?? current.legend, options: nextOptions }
       imageToolRef.current = next
       return next

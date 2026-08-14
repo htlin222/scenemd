@@ -174,7 +174,6 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
           )}
         </div>
         <div className="figure-dialog-fields">
-          <label className="figure-field-wide"><span>Legend text</span><textarea rows={2} value={state.legend} disabled={!state.legendEditable} onChange={(event) => onChange({ legend: event.target.value })} placeholder="Legend text shown beside the figure" title={state.legendEditable ? 'Saved into the same paragraph as the image; previewed live on the canvas' : 'This image shares its paragraph with other content, so the legend cannot be edited here'} /></label>
           <label className="figure-field-wide"><span>Image URL</span><input value={state.url} onChange={(event) => onChange({ url: event.target.value })} /></label>
           <label className="figure-field-wide"><span>Alt text</span><input value={state.options.alt} onChange={(event) => onChange({ alt: event.target.value })} placeholder="Describe this image for screen readers" /></label>
           <div className="figure-dialog-upload">
@@ -191,12 +190,8 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
             <div className="figure-dialog-advanced-grid">
               <label><span>Size (scene %)</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" /></label>
               <label><span>Scaling</span><select value={state.options.fit} onChange={(event) => onChange({ fit: event.target.value as MarpitImageOptions['fit'] })}><option value="contain">Fit · no crop</option><option value="auto">Natural size</option></select></label>
-              <label><span>Layout</span><select value={state.options.layout} onChange={(event) => onChange({ layout: event.target.value as MarpitImageOptions['layout'] })}><option value="legend">Image with legend</option><option value="auto">Automatic flow</option><option value="hero">Hero image</option></select></label>
               <label><span>Width</span><input value={state.options.width} onChange={(event) => onChange({ width: event.target.value })} placeholder="e.g. 480px" /></label>
               <label><span>Height</span><input value={state.options.height} onChange={(event) => onChange({ height: event.target.value })} placeholder="e.g. 280px" /></label>
-              <label className="figure-field-check"><input type="checkbox" checked={state.options.background} onChange={(event) => onChange({ background: event.target.checked })} /><span>Scene background</span></label>
-              <label><span>Background side</span><select value={state.options.side} disabled={!state.options.background} onChange={(event) => onChange({ side: event.target.value as MarpitImageOptions['side'] })}><option value="none">Full</option><option value="left">Left</option><option value="right">Right</option></select></label>
-              <label><span>Split size</span><input disabled={!state.options.background || state.options.side === 'none'} value={state.options.splitSize} onChange={(event) => onChange({ splitSize: event.target.value })} placeholder="50%" /></label>
               <label className="figure-field-wide"><span>Filters</span><input value={state.options.filters} onChange={(event) => onChange({ filters: event.target.value })} placeholder="brightness:.8 sepia:50%" /></label>
             </div>
           </details>

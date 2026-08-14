@@ -176,12 +176,12 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
       filter: imageFilterCss(block.imageOptions?.filters ?? ''),
       objectFit: block.imageOptions?.fit === 'auto' ? 'scale-down' : 'contain',
     }
-    // `size=NN%` is a fraction of the scene's content area. Containers are
-    // inline-size, so it is expressed through the 16:9 ratio times the content
-    // fraction (~84% of the stage after chrome): 1% ≈ 0.5625 × 0.84 cqw.
+    // `size=NN%` resolves against the figure column, whose height is exactly
+    // the space remaining under the heading — the layout does the arithmetic,
+    // so the planner and the pixels can never drift apart (design v5).
     const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
     const frameStyle = sized
-      ? { '--figure-height': `calc(${Number(sized[1]) * 0.5625 * 0.84} * 1cqw)`, maxHeight: 'none' } as CSSProperties
+      ? { '--figure-height': `${Number(sized[1])}%` } as CSSProperties
       : block.imageOptions?.height
         ? { '--figure-height': block.imageOptions.height } as CSSProperties
         : undefined
@@ -276,22 +276,14 @@ interface SceneViewProps {
 export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revealIndex, measurement = false, navigationLabels = [], activeNavigationLabel, onNavigateLabel, presentationConfig, citationReferences }: SceneViewProps) {
   const heading = scene.blocks.find((block) => block.type === 'heading')
   const content = scene.blocks.filter((block) => block !== heading)
-  const figures = content.filter((block) => block.type === 'figure')
-  const backgroundFigure = figures.find((block) => block.imageOptions?.background && block.layoutHint !== 'legend')
-  const visibleFigures = figures.filter((block) => block !== backgroundFigure)
+  const visibleFigures = content.filter((block) => block.type === 'figure')
   const prose = content.filter((block) => block.type !== 'figure')
+  const firstFigureIndex = scene.blocks.findIndex((block) => block.type === 'figure')
+  const aboveProse = prose.filter((block) => scene.blocks.indexOf(block) < firstFigureIndex)
+  const belowProse = prose.filter((block) => scene.blocks.indexOf(block) > firstFigureIndex)
   const sceneReferences = sceneCitationNumbers(scene)
     .map((number) => ({ number, content: citationReferences?.get(number) }))
     .filter((entry): entry is { number: number; content: InlineNode[] } => Boolean(entry.content))
-  const backgroundStyle = backgroundFigure ? {
-    backgroundImage: `url(${JSON.stringify(backgroundFigure.url ?? '').slice(1, -1)})`,
-    // Background figures follow the same no-crop rule as inline figures.
-    backgroundSize: 'contain',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
-    filter: imageFilterCss(backgroundFigure.imageOptions?.filters ?? ''),
-    '--scene-bg-split': backgroundFigure.imageOptions?.splitSize || '50%',
-  } as CSSProperties : undefined
 
   const renderBlocks = (blocks: PresentationBlock[]) => blocks.map((block) => (
     <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} />
@@ -338,8 +330,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
   }
 
   return (
-    <article className={`scene scene-${scene.layout}${backgroundFigure ? ` has-background background-${backgroundFigure.imageOptions?.side ?? 'none'}` : ''}${sceneReferences.length ? ' has-citations' : ''}`} data-layout={scene.layout} data-scene-id={scene.id} data-presentation-theme={presentationConfig.theme}>
-      {backgroundFigure && <div className="scene-background-image" style={backgroundStyle} role="img" aria-label={backgroundFigure.alt ?? ''} />}
+    <article className={`scene scene-${scene.layout}${sceneReferences.length ? ' has-citations' : ''}`} data-layout={scene.layout} data-scene-id={scene.id} data-presentation-theme={presentationConfig.theme}>
       {navigationLabels.length > 0 && (
         <nav className="scene-section-nav" aria-label="Document sections">
           {navigationLabels.slice(0, 7).map((label) => (
@@ -352,25 +343,16 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
         {scene.continuationLabel && <div className="continuation-label">{scene.continuationLabel}</div>}
         {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
-        {scene.layout === 'legend' ? (
-          <div className={`legend-grid${visibleFigures.some((figure) => figure.imageOptions?.size) ? ' is-sized' : ''}`}>
-            <div className="legend-media">{renderBlocks(visibleFigures)}</div>
-            <div className="legend-copy">
-              {renderBlocks(prose)}
-              {visibleFigures.some((figure) => figure.caption?.length || figure.alt) && <div className="legend-caption">
-                {visibleFigures.map((figure) => (figure.caption?.length || figure.alt) && <p key={`${figure.id}-caption`}>{figure.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {figure.figureNumber}</strong>}<InlineContent nodes={figure.caption?.length ? figure.caption : [{ type: 'text', value: figure.alt ?? '' }]} /></p>)}
-              </div>}
+        {scene.layout === 'figure' ? (
+          // Position decides the text's role: paragraphs above the figure are
+          // body copy in the right column, paragraphs below it are the legend
+          // under the image (design v5).
+          <div className={`figure-grid${aboveProse.length ? '' : ' is-figure-only'}`}>
+            <div className="figure-col">
+              {renderBlocks(visibleFigures)}
+              {!!belowProse.length && <div className="figure-below-caption">{renderBlocks(belowProse)}</div>}
             </div>
-          </div>
-        ) : scene.layout === 'text-media' ? (
-          <div className="text-media-grid">
-            <div className="prose-column">{renderBlocks(prose)}</div>
-            <div className="media-column">{renderBlocks(visibleFigures)}</div>
-          </div>
-        ) : scene.layout === 'media-dominant' ? (
-          <div className="media-dominant-grid">
-            <div className="media-column">{renderBlocks(visibleFigures)}</div>
-            {!!prose.length && <div className="prose-column">{renderBlocks(prose)}</div>}
+            {!!aboveProse.length && <div className="figure-text-col" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>{renderBlocks(aboveProse)}</div>}
           </div>
         ) : (
           <div className="prose-flow">{renderBlocks(content)}</div>

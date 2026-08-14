@@ -503,7 +503,21 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
     if (block.type !== 'figure') return
     figureCount += 1
     block.figureNumber = figureCount
-    block.layoutHint = block.imageOptions?.layout === 'hero' ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
+    // Legacy hero (Marpit token, layout=hero, or present: hero) degrades to a
+    // full-height figure in the single v5 layout.
+    if ((block.imageOptions?.layout === 'hero' || block.layoutHint === 'hero') && block.imageOptions && !block.imageOptions.size) {
+      block.imageOptions.size = '100%'
+    }
+    // Position decides text roles: every consecutive paragraph BELOW a figure
+    // is its legend and stays with it. Text above the figure remains free.
+    let previous: PresentationBlock = block
+    for (let nextIndex = blocks.indexOf(block) + 1; nextIndex < blocks.length; nextIndex += 1) {
+      const next = blocks[nextIndex]
+      if (next.type !== 'paragraph') break
+      previous.keepWithNext = true
+      next.keepWithPrevious = true
+      previous = next
+    }
   })
 
   return blocks

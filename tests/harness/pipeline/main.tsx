@@ -20,15 +20,16 @@ const viewport = {
   height: stageWidth < 560 ? stageWidth * (16 / 9) : Math.max(360, stageWidth * 0.5625),
 }
 
+// The author's canonical figure-page pattern (design v5): `---` cuts pages;
+// inside a figure page, prose above the image is body copy and prose below it
+// is the legend.
 const DOC = `## Renal function
 
-<!-- present: group -->
-![GFR chart](https://img.test/fig.png){size=45%} 圖一：腎絲球過濾率隨年齡下降
+腎功能隨年齡下降，本頁說明其臨床意義與判讀重點。
 
-A normal paragraph added below the figure should stay on this scene together.
+![GFR chart](https://img.test/fig.png){size=45%}
 
-A second short paragraph also belongs to this same section of the document.
-<!-- present: end-group -->
+圖一：腎絲球過濾率隨年齡下降（資料來源：NHANES 系列研究）。
 `
 
 const config = defaultPresentationConfig('Pipeline harness')

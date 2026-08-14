@@ -156,7 +156,9 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(blocks.at(-1)?.groupId).toBeUndefined()
   })
 
-  it('no longer glues neighbors to a figure implicitly', () => {
+  it('binds below-figure paragraphs as the legend and leaves above prose free', () => {
+    // design v5: position decides the role — paragraphs after the figure are
+    // its legend and must stay with it; the paragraph before it is body text.
     const blocks = parsePresentationDocument(
       'Lead-in prose.\n\n![Figure](f.png)\n\nExplanatory copy.\n',
     )
@@ -164,8 +166,8 @@ describe('parsePresentationDocument — semantic normalization', () => {
 
     expect(blocks[figureIndex - 1].keepWithNext).toBe(false)
     expect(blocks[figureIndex].keepWithPrevious).toBe(false)
-    expect(blocks[figureIndex].keepWithNext).toBe(false)
-    expect(blocks[figureIndex + 1].keepWithPrevious).toBe(false)
+    expect(blocks[figureIndex].keepWithNext).toBe(true)
+    expect(blocks[figureIndex + 1].keepWithPrevious).toBe(true)
   })
 
   it('keeps a quote atomic and treats it as a statement', () => {
@@ -260,29 +262,22 @@ describe('parsePresentationDocument — manual overrides', () => {
     expect(blocks[1].keepWithNext).toBe(false)
   })
 
-  // KNOWN BUG — `present: hero` is documented in spec.md and README but has no
-  // effect on an image, which is the only block it is meaningful for. The
-  // figure post-pass in parsePresentationDocument unconditionally overwrites
-  // layoutHint from imageOptions.layout, discarding what applyDirectives set.
-  //
-  // The Marpit alt form `![hero Alt](a.png)` does work, so this is a dead
-  // directive rather than a missing capability. Tracked in #23.
-  //
-  // it.fails asserts the current broken behavior: when the bug is fixed this
-  // test starts passing, which vitest reports as an error, prompting whoever
-  // fixed it to promote this to a normal `it`.
-  it.fails('applies present: hero to a figure', () => {
+  // design v5: hero is no longer a layout — all its spellings degrade to a
+  // full-height figure in the single figure layout. This also fixes #23: the
+  // `present: hero` directive used to be dead because the figure post-pass
+  // overwrote layoutHint; now it feeds the size mapping like the other forms.
+  it('applies present: hero as a full-height figure', () => {
     const blocks = parsePresentationDocument('<!-- present: hero -->\n\n![One](a.png)\n')
     const figure = blocks.find((block) => block.type === 'figure')
 
-    expect(figure?.layoutHint).toBe('hero')
+    expect(figure?.imageOptions?.size).toBe('100%')
   })
 
   it('still honours the Marpit alt form of hero', () => {
     const blocks = parsePresentationDocument('![hero One](a.png)\n')
     const figure = blocks.find((block) => block.type === 'figure')
 
-    expect(figure?.layoutHint).toBe('hero')
+    expect(figure?.imageOptions?.size).toBe('100%')
   })
 
   it('keeps a block with the next one under present: keep', () => {

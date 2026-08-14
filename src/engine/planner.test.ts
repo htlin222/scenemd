@@ -77,6 +77,18 @@ describe('planScenes — explicit groups', () => {
 })
 
 describe('planScenes — full-bleed figures', () => {
+  it('measures size against the height remaining after the heading', () => {
+    // design v5: with an H2 on the scene, size=100% means the space left
+    // under the heading — the scene fills exactly, no overflow warning.
+    const { blocks, regions } = regionsFrom('## Title\n\n![chart](fig.png){size=100%} 圖說\n')
+    const plan = planScenes(regions, measure(blocks, (b) => (b.type === 'heading' ? 76 : 300)), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure')
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
   it('lets a lone size=100% figure fill a scene without an overflow warning', () => {
     // The warning the author saw: size was measured against the full stage
     // while the budget is the content area, so ≥84% always overflowed.
@@ -87,6 +99,22 @@ describe('planScenes — full-bleed figures', () => {
     expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
     expect(plan.scenes[0].warning).toBeUndefined()
     expect(plan.overflowCount).toBe(0)
+  })
+})
+
+describe('planScenes — above-figure text shrinks to fit', () => {
+  it('scales oversized body text instead of pushing it off the figure page', () => {
+    // "你可以縮小文字，總之塞就對了" — above-figure prose shrinks (floor 0.6)
+    // so the author-delimited figure page holds.
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![chart](fig.png){size=45%}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 500 : block.type === 'figure' ? 280 : 60))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
   })
 })
 
@@ -286,16 +314,12 @@ describe('chooseLayout', () => {
     expect(chooseLayout([block({ type: 'blockquote' })])).toBe('statement')
   })
 
-  it('chooses legend for the default figure composition', () => {
-    // The normalizer makes `legend` the default hint for images, so an
-    // ordinary figure with prose lands here rather than in text-media.
-    const scene = [block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })]
-    expect(chooseLayout(scene)).toBe('legend')
-  })
-
-  it('chooses media-dominant for a hero figure', () => {
-    const scene = [block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })]
-    expect(chooseLayout(scene)).toBe('media-dominant')
+  it('chooses the single figure layout for any composition containing a figure', () => {
+    // design v5: figure scenes have exactly one structure — optional heading,
+    // then figure left / text right. No legend, text-media, or media-dominant.
+    expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })])).toBe('figure')
+    expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })])).toBe('figure')
+    expect(chooseLayout([block({ id: 'f', type: 'figure' })])).toBe('figure')
   })
 
   it('chooses text when there is no media', () => {

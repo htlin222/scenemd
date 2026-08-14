@@ -39,22 +39,16 @@ test('clicking inside image syntax opens the popover', async ({ page }) => {
   await expect(page.locator('.figure-dialog')).toContainText('Figure')
 })
 
-test('the popover reads and rewrites the same-paragraph legend', async ({ page }) => {
-  await page.locator('.cm-line', { hasText: '![Second figure]' }).click({ position: { x: 40, y: 16 } })
-  const popover = page.locator('.figure-dialog')
-  await expect(popover).toBeVisible()
-
-  const legendField = popover.getByLabel('Legend text')
-  await expect(legendField).toHaveValue('')
-  await legendField.fill('圖二：新的 legend 文字')
-  await popover.getByRole('button', { name: 'Save' }).click()
+test('saving the dialog preserves a same-paragraph caption untouched', async ({ page }) => {
+  // design v5: the dialog edits only the figure; caption text is edited as
+  // ordinary markdown and must survive a dialog save byte-for-byte.
+  await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
+  const dialog = page.locator('.figure-dialog')
+  await expect(dialog).toBeVisible()
+  await dialog.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText(
-    '![Second figure](https://img.test/two.png) 圖二：新的 legend 文字',
+    '![Hybrid chart](https://img.test/three.png){width=40%} Hybrid legend text.',
   )
-
-  // Reopening the popover reads the saved legend back.
-  await page.locator('.cm-line', { hasText: '![Second figure]' }).click({ position: { x: 40, y: 16 } })
-  await expect(popover.getByLabel('Legend text')).toHaveValue('圖二：新的 legend 文字')
 })
 
 test('the popover round-trips hybrid attribute syntax', async ({ page }) => {
@@ -62,10 +56,8 @@ test('the popover round-trips hybrid attribute syntax', async ({ page }) => {
   const popover = page.locator('.figure-dialog')
   await expect(popover).toBeVisible()
 
-  // Bracket text is verbatim alt; config comes from the {…} block; the legend
-  // excludes the attribute block.
+  // Bracket text is verbatim alt; config comes from the {…} block.
   await expect(popover.getByLabel('Alt text')).toHaveValue('Hybrid chart')
-  await expect(popover.getByLabel('Legend text')).toHaveValue('Hybrid legend text.')
 
   await popover.locator('summary', { hasText: 'Advanced' }).click()
   await expect(popover.getByLabel('Width')).toHaveValue('40%')
