@@ -5,7 +5,6 @@ import {
   BookOpen,
   Bug,
   Check,
-  Clock3,
   Copy,
   Download,
   Ellipsis,
@@ -22,11 +21,8 @@ import {
   PanelRight,
   Palette,
   Play,
-  Pencil,
   Plus,
   RefreshCw,
-  Search,
-  Trash2,
   Share2,
   SquareLibrary,
   Sun,
@@ -49,18 +45,18 @@ import { defaultPresentationConfig, normalizePresentationConfig } from './presen
 import { downloadBlob, exportFileName } from './export'
 import { DEMO_MARKDOWN } from './app/constants'
 import { Cheatsheet } from './app/CheatsheetDialog'
+import { DocumentsHome, useDocumentLibrary } from './app/DocumentsHome'
 import { LlmPromptDialog } from './app/LlmPromptDialog'
 import {
   EMPTY_PLAN, CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
-  type Route, type SaveStatus, type HeaderActionSpec, type DocumentSummary, type DocumentPayload,
+  type Route, type SaveStatus, type HeaderActionSpec, type DocumentPayload,
   type SaveConflictState, type ConflictBackup, type DeployVersion,
   directHeaderActionCount, stashConflictBackup, readConflictBackup, clearConflictBackup, conflictExcerpts,
-  getInitialTheme, parseRoute, titleFromMarkdown, absoluteSceneImageUrls, formatUpdated, formatDeployTime,
+  getInitialTheme, parseRoute, titleFromMarkdown, absoluteSceneImageUrls, formatDeployTime,
   previewViewport, blockRevealSteps, updateSceneSpeakerNote, sceneTranscriptText,
 } from './app/shared'
 function App() {
   const [route, setRoute] = useState<Route>(parseRoute)
-  const [documents, setDocuments] = useState<DocumentSummary[]>([])
   const [markdown, setMarkdown] = useState('')
   const [documentTitle, setDocumentTitle] = useState('Untitled document')
   const [documentRevision, setDocumentRevision] = useState(0)
@@ -72,8 +68,6 @@ function App() {
   const [conflictBackup, setConflictBackup] = useState<ConflictBackup | null>(null)
   const [newerDeployTime, setNewerDeployTime] = useState<string | null>(null)
   const [refreshingDeploy, setRefreshingDeploy] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
   const [shareLink, setShareLink] = useState<string | null>(null)
   const [shareBusy, setShareBusy] = useState(false)
   const [density, setDensity] = useState<Density>('balanced')
@@ -89,10 +83,6 @@ function App() {
   const [showExport, setShowExport] = useState(false)
   const [showPresentationSettings, setShowPresentationSettings] = useState(false)
   const [showHackMDSync, setShowHackMDSync] = useState(false)
-  const [renamingId, setRenamingId] = useState<string | null>(null)
-  const [renameDraft, setRenameDraft] = useState('')
-  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
-  const [rowBusyId, setRowBusyId] = useState<string | null>(null)
   const [hackMDSyncing, setHackMDSyncing] = useState(false)
   const [directHeaderCount, setDirectHeaderCount] = useState(() => directHeaderActionCount(window.innerWidth))
   const [headerOverflowOpen, setHeaderOverflowOpen] = useState(false)
@@ -226,10 +216,6 @@ function App() {
     if (line <= 0) return
     setEditorScrollRequest((current) => ({ line, key: (current?.key ?? 0) + 1 }))
   }, [plan.scenes, presenting, sceneSyncEnabled, showPreview])
-  const filteredDocuments = useMemo(() => {
-    const query = searchQuery.trim().toLocaleLowerCase()
-    return query ? documents.filter((document) => document.title.toLocaleLowerCase().includes(query)) : documents
-  }, [documents, searchQuery])
 
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, '', path)
@@ -238,6 +224,8 @@ function App() {
     setShowPreview(false)
     setSceneIndex(0)
   }, [])
+
+  const library = useDocumentLibrary(route.kind === 'home', navigate)
 
   useEffect(() => {
     const onPopState = () => setRoute(parseRoute())
@@ -293,10 +281,8 @@ function App() {
     const load = async () => {
       try {
         if (route.kind === 'home') {
-          const response = await fetch('/api/documents', { signal: controller.signal })
-          const result = await response.json() as { documents?: DocumentSummary[]; error?: string }
-          if (!response.ok) throw new Error(result.error || 'Could not load documents')
-          setDocuments(result.documents ?? [])
+          // The list itself is fetched by useDocumentLibrary; this effect only
+          // resets the editor state left over from a document route.
           setMarkdown('')
           setPresentationConfig(defaultPresentationConfig('Untitled document'))
         } else {
@@ -641,67 +627,8 @@ function App() {
     setShowPreview(true)
   }
 
-  const renameDocument = async (documentId: string) => {
-    const title = renameDraft.trim()
-    const previous = documents.find((entry) => entry.id === documentId)
-    setRenamingId(null)
-    if (!title || title === previous?.title) return
-    setRowBusyId(documentId)
-    setApiError(null)
-    try {
-      // rename: true also rewrites the document's leading H1, because the
-      // title follows the H1 and would otherwise revert on the next autosave.
-      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, rename: true }),
-      })
-      const result = await response.json() as DocumentPayload & { error?: string }
-      if (!response.ok) throw new Error(result.error || 'Could not rename document')
-      setDocuments((current) => current.map((entry) => entry.id === documentId ? { ...entry, title: result.title, revision: result.revision, updatedAt: result.updatedAt ?? entry.updatedAt } : entry))
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not rename document')
-    } finally {
-      setRowBusyId(null)
-    }
-  }
 
-  const deleteDocument = async (documentId: string) => {
-    setConfirmingDeleteId(null)
-    setRowBusyId(documentId)
-    setApiError(null)
-    try {
-      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' })
-      if (!response.ok && response.status !== 404) {
-        const result = await response.json().catch(() => ({})) as { error?: string }
-        throw new Error(result.error || 'Could not delete document')
-      }
-      setDocuments((current) => current.filter((entry) => entry.id !== documentId))
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not delete document')
-    } finally {
-      setRowBusyId(null)
-    }
-  }
 
-  const createDocument = async () => {
-    setCreating(true)
-    setApiError(null)
-    try {
-      const response = await fetch('/api/documents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Untitled document', markdown: '# Introduction\n\nStart writing here.\n', presentationConfig: defaultPresentationConfig('Untitled presentation') }),
-      })
-      const result = await response.json() as DocumentPayload & { error?: string }
-      if (!response.ok) throw new Error(result.error || 'Could not create document')
-      navigate(`/document/${result.id}`)
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not create document')
-    } finally {
-      setCreating(false)
-    }
-  }
 
   const createShareLink = async () => {
     if (route.kind !== 'document') return
@@ -819,10 +746,10 @@ function App() {
           <span className="brand-mark"><span /><span /><span /></span>
           <span>Scene<span>MD</span></span>
         </button>
-        {route.kind === 'home' ? <div className="document-breadcrumb"><Files size={14} /><span>Documents</span><small>{documents.length} files</small></div> : <div className="document-breadcrumb"><FileText size={14} /><span>{documentTitle}</span><small>{isReadOnlyShare ? 'Read only' : saveLabel}</small></div>}
+        {route.kind === 'home' ? <div className="document-breadcrumb"><Files size={14} /><span>Documents</span><small>{library.documents.length} files</small></div> : <div className="document-breadcrumb"><FileText size={14} /><span>{documentTitle}</span><small>{isReadOnlyShare ? 'Read only' : saveLabel}</small></div>}
         <nav className="header-actions" aria-label="Document actions">
           {(!themeInOverflow || route.kind === 'home' || isReadOnlyShare) && renderThemeButton()}
-          {route.kind === 'home' ? <button className="present-button" onClick={() => void createDocument()} disabled={creating}><Plus size={16} /> {creating ? 'Creating…' : 'New document'}</button> : <>
+          {route.kind === 'home' ? <button className="present-button" onClick={() => void library.create()} disabled={library.creating}><Plus size={16} /> {library.creating ? 'Creating…' : 'New document'}</button> : <>
             {directHeaderActions.map((action) => renderDocumentHeaderAction(action))}
             {hasHeaderOverflow && <div className="header-overflow" ref={headerOverflowRef}>
               <button className={`header-overflow-trigger${headerOverflowOpen ? ' is-active' : ''}`} onClick={() => setHeaderOverflowOpen((open) => !open)} aria-label="More document actions" aria-expanded={headerOverflowOpen} aria-haspopup="menu"><Ellipsis size={18} /></button>
@@ -838,42 +765,7 @@ function App() {
       </header>
 
       {route.kind === 'home' ? (
-        <main className="documents-home">
-          <section className="documents-hero">
-            <span>Document-first presentations</span>
-            <h1>Your documents</h1>
-            <p>Write once in Markdown. SceneMD composes the presentation when you need it.</p>
-            <button onClick={() => void createDocument()} disabled={creating}><Plus size={18} /> {creating ? 'Creating document…' : 'New document'}</button>
-          </section>
-          <section className="documents-library" aria-labelledby="documents-title">
-            <div className="library-heading"><div><h2 id="documents-title">Files</h2><span>{filteredDocuments.length} documents</span></div><label className="document-search"><Search size={16} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search documents" aria-label="Search documents" /></label></div>
-            {apiError && <div className="api-message is-error">{apiError}</div>}
-            {loading ? <div className="document-empty">Loading your documents…</div> : filteredDocuments.length ? <div className="document-list">
-              {filteredDocuments.map((document) => <div key={document.id} className={`document-row-wrap${rowBusyId === document.id ? ' is-busy' : ''}`}>
-                {renamingId === document.id ? <form className="document-row document-rename" onSubmit={(event) => { event.preventDefault(); void renameDocument(document.id) }}>
-                  <span className="document-icon"><FileText size={19} /></span>
-                  <input value={renameDraft} onChange={(event) => setRenameDraft(event.target.value)} onKeyDown={(event) => event.key === 'Escape' && setRenamingId(null)} aria-label={`Rename ${document.title}`} ref={(node) => node?.focus()} />
-                  <button type="submit" className="row-action" aria-label="Save name"><Check size={15} /></button>
-                  <button type="button" className="row-action" onClick={() => setRenamingId(null)} aria-label="Cancel rename"><X size={15} /></button>
-                </form> : <>
-                  <button className="document-row" onClick={() => navigate(`/document/${document.id}`)} disabled={rowBusyId === document.id}>
-                    <span className="document-icon"><FileText size={19} /></span>
-                    <span className="document-name"><strong>{document.title}</strong><small><Clock3 size={12} /> Updated {formatUpdated(document.updatedAt)}</small></span>
-                    {document.shared && <span className="shared-badge"><Link2 size={12} /> Shared</span>}
-                    <span className="document-revision">v{document.revision}</span>
-                    <ArrowRight size={17} />
-                  </button>
-                  <span className="document-row-actions">
-                    <button className="row-action" onClick={() => { setRenamingId(document.id); setRenameDraft(document.title); setConfirmingDeleteId(null) }} aria-label={`Rename ${document.title}`} disabled={rowBusyId === document.id}><Pencil size={15} /></button>
-                    {confirmingDeleteId === document.id
-                      ? <button className="row-action is-danger is-confirming" onClick={() => void deleteDocument(document.id)} onBlur={() => setConfirmingDeleteId(null)} aria-label={`Confirm deleting ${document.title}`} disabled={rowBusyId === document.id}>Delete?</button>
-                      : <button className="row-action is-danger" onClick={() => setConfirmingDeleteId(document.id)} aria-label={`Delete ${document.title}`} disabled={rowBusyId === document.id}><Trash2 size={15} /></button>}
-                  </span>
-                </>}
-              </div>)}
-            </div> : <div className="document-empty"><Files size={28} /><strong>No documents yet</strong><span>Create your first Markdown document to begin.</span><button onClick={() => void createDocument()}><Plus size={15} /> New document</button></div>}
-          </section>
-        </main>
+        <DocumentsHome library={library} navigate={navigate} />
       ) : loading ? <main className="route-loading">Loading document…</main> : apiError ? <main className="route-loading is-error"><strong>Could not open this document</strong><span>{apiError}</span><button onClick={() => navigate('/')}>Back to documents</button></main> : isReadOnlyShare ? (
         <main className="shared-document-shell">
           <div className="shared-document-notice"><Link2 size={15} /><span>This is a read-only shared document.</span></div>
