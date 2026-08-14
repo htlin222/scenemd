@@ -180,7 +180,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
 
   return createPortal(
     <div className="figure-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
-      <section className="figure-dialog" role="dialog" aria-modal="true" aria-label="Figure editor">
+      <dialog open className="figure-dialog" aria-modal="true" aria-label="Figure editor">
         <header>
           <div><Image size={17} /><strong>Figure</strong><span>true-scale 16:9 scene preview · drag the handle to size the figure</span></div>
           <button onClick={onCancel} aria-label="Close figure editor"><X size={16} /></button>
@@ -217,7 +217,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
           <button onClick={onCancel}>Cancel</button>
           <button className="is-primary" onClick={onSave} disabled={!state.url.trim()}><Check size={15} /> Save</button>
         </footer>
-      </section>
+      </dialog>
     </div>,
     document.body,
   )

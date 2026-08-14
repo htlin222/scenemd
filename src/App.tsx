@@ -527,7 +527,7 @@ function App() {
       {showPresentationSettings && <PresentationSettingsDialog value={presentationConfig} onSave={(config) => { setPresentationConfig(config); setSceneIndex(0) }} onClose={() => setShowPresentationSettings(false)} />}
       {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={adoptServerDocument} />}
       {presenterWindow && !presenterWindow.closed && <PresenterWindow target={presenterWindow} scenes={plan.scenes} sceneIndex={sceneIndex} revealIndex={revealIndex} presentationConfig={presentationConfig} citationReferences={citationReferences} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onPrevious={goPrevious} onNext={goNext} onBlack={() => setBlank((value) => value === 'black' ? null : 'black')} onClosed={closePresenterWindow} />}
-      {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissShareLink() }}><aside className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => dismissShareLink()}>Done</button></aside></div>}
+      {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissShareLink() }}><dialog open className="share-dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => dismissShareLink()}>Done</button></dialog></div>}
       {saveConflict && <div className="save-conflict-backdrop" role="presentation"><aside className="save-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title">
         <div className="save-conflict-icon"><RefreshCw size={21} /></div>
         <h2 id="save-conflict-title">Two sessions edited this document</h2>
@@ -548,29 +548,30 @@ function App() {
         </div>
       </aside></div>}
 
-      {conflictBackup && route.kind === 'document' && !saveConflict && <aside className="deploy-update-toast conflict-backup-toast" role="status" aria-live="polite">
+      {conflictBackup && route.kind === 'document' && !saveConflict && <output className="deploy-update-toast conflict-backup-toast">
         <span className="deploy-update-icon"><Copy size={18} /></span>
         <span className="deploy-update-copy"><strong>A backup from an unresolved conflict exists</strong><small>saved {new Date(conflictBackup.at).toLocaleString()} — it differs from the loaded document</small></span>
         <button onClick={() => void navigator.clipboard.writeText(conflictBackup.markdown)}><Copy size={14} /> Copy</button>
         <button onClick={() => downloadBlob(new Blob([conflictBackup.markdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${documentTitle} (conflict backup)`, 'md'))}>Download</button>
         <button onClick={discardConflictBackup}>Discard</button>
-      </aside>}
+      </output>}
 
-      {newerDeployTime && <aside className="deploy-update-toast" role="status" aria-live="polite">
+      {newerDeployTime && <output className="deploy-update-toast">
         <span className="deploy-update-icon"><RefreshCw className={refreshingDeploy ? 'is-spinning' : ''} size={18} /></span>
         <span className="deploy-update-copy"><strong>SceneMD 已有新版本</strong><small>部署時間 {formatDeployTime(newerDeployTime)} GMT+8</small></span>
         <button onClick={() => void forceRefreshForDeploy()} disabled={refreshingDeploy}>{refreshingDeploy ? '更新中…' : '重新整理'}</button>
-      </aside>}
+      </output>}
 
       {route.kind !== 'home' && <MeasurementRoot blocks={blocks} measureRef={measureRef} width={Math.max(320, viewport.width - 150)} />}
 
-      {presenting && currentScene && <div className="presentation-overlay" role="dialog" aria-label="Presentation mode">
+      {presenting && currentScene && <dialog open className="presentation-overlay" aria-label="Presentation mode">
+        <div className="sr-only" aria-live="polite">{`Scene ${sceneIndex + 1} of ${plan.scenes.length}`}</div>
         <div className="presentation-zoom-layer" style={{ transform: `scale(${presentationZoom})` }}><SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={revealIndex} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /></div>
         <PresentationRuntimeTools sceneId={currentScene.id} zoom={presentationZoom} onZoomChange={setPresentationZoom} />
         <div className="presentation-controls"><button onClick={goPrevious} aria-label="Previous"><ArrowLeft size={18} /></button><span>{sceneIndex + 1} / {plan.scenes.length}</span><button onClick={goNext} aria-label="Next"><ArrowRight size={18} /></button><span className="control-separator" /><button onClick={openPresenterWindow} aria-label="Open presenter window"><Mic2 size={17} /></button>{!isReadOnlyShare && <button onClick={() => setDebug((value) => !value)} aria-label="Toggle debug"><Bug size={17} /></button>}<button onClick={exitPresentation} aria-label="Exit presentation"><X size={18} /></button></div>
         <div className={`keyboard-hint ${showShortcutHint ? 'is-visible' : ''}`}><span><kbd>←</kbd><kbd>→</kbd> navigate</span><span><kbd>S</kbd> speaker</span><span><kbd>B</kbd> black</span><span><kbd>W</kbd> white</span><span><kbd>Esc</kbd> exit</span></div>
-        {blank && <div className={`blank-screen blank-${blank}`} onClick={() => setBlank(null)} />}
-      </div>}
+        {blank && <button type="button" className={`blank-screen blank-${blank}`} onClick={() => setBlank(null)} aria-label="Resume presentation" />}
+      </dialog>}
 
       {route.kind !== 'home' && !isReadOnlyShare && <button className="mobile-present" onClick={startPresentation}><Expand size={17} /> Present</button>}
     </div>

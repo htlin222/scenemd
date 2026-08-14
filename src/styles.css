@@ -1071,3 +1071,18 @@ body { background: var(--surface); }
 .document-rename { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto auto; gap: 14px; align-items: center; padding: 10px 8px; border-bottom: 1px solid var(--line); }
 .document-rename input { min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface, transparent); color: var(--ink); font: inherit; font-weight: 600; }
 .hackmd-unlink:hover { color: #b3261e; }
+
+/* Accessibility pass (#14) */
+
+/* Native <dialog> replaces role="dialog" containers; strip UA chrome so each
+   dialog's class styles govern exactly as they did on aside/section. */
+dialog { position: static; inset: auto; margin: 0; border: 0; padding: 0; width: auto; height: auto; max-width: none; max-height: none; background: transparent; color: inherit; }
+
+/* Visually hidden live region for screen-reader announcements. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* Respect reduced-motion preferences: motion becomes instant, nothing breaks
+   because every animation here is decorative. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}

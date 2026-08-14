@@ -80,8 +80,8 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
   }
 
   return createPortal(
-    <div className="oe-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="oe-import-dialog" role="dialog" aria-modal="true" aria-labelledby="oe-import-title">
+    <div className="oe-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <dialog open className="oe-import-dialog" aria-modal="true" aria-labelledby="oe-import-title">
         <header>
           <div>
             <span className="oe-mark" aria-hidden="true">O</span>
@@ -119,7 +119,7 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
           <span>{conversation ? `${selected.size} selected` : 'Only public links can be read'}</span>
           <button className="oe-insert-button" disabled={!conversation || !selected.size || inserting} onClick={() => void insertSelected()}>{inserting ? <><LoaderCircle className="is-spinning" size={15} /> Formatting AMA…</> : 'Insert into document'}</button>
         </footer>
-      </section>
+      </dialog>
     </div>,
     document.body,
   )

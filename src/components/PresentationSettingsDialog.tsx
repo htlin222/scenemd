@@ -28,8 +28,8 @@ export function PresentationSettingsDialog({ value, onSave, onClose }: Presentat
   }, [onClose])
 
   return createPortal(
-    <div className="presentation-settings-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="presentation-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="presentation-settings-title">
+    <div className="presentation-settings-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <dialog open className="presentation-settings-dialog" aria-modal="true" aria-labelledby="presentation-settings-title">
         <header>
           <div><Palette size={18} /><div><small>Presentation</small><h2 id="presentation-settings-title">Design &amp; cover</h2></div></div>
           <button onClick={onClose} aria-label="Close presentation settings"><X size={18} /></button>
@@ -53,7 +53,7 @@ export function PresentationSettingsDialog({ value, onSave, onClose }: Presentat
             <small>{draft.license}</small>
           </aside>
         </div>
-      </section>
+      </dialog>
     </div>,
     document.body,
   )
