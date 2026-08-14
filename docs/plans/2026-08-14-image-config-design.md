@@ -69,10 +69,42 @@ carries no `{…}` at all.
 5. `src/lib/legendText.ts` — unchanged semantics; the wider image span already
    keeps attributes out of the legend.
 
-## Follow-up (separate change)
+## v2 — figure module UX (approved 2026-08-14, second interview)
 
-Pagination: figures are measured at a fixed 240px frame but render at `31cqw`
-in the legend grid, and the planner marks any over-capacity multi-block
-candidate invalid — in short viewports this strands every paragraph after a
-figure onto the next scene. Fix planned with a Playwright pipeline harness
-(markdown → measure → planScenes → SceneView) to reproduce and pin behavior.
+Core principle: **the author decides only how much of the 16:9 scene the image
+occupies; everything else stays semantic.**
+
+1. **`size=NN%`** — the figure's height as a percentage of the scene height,
+   chosen by dragging on a 16:9 canvas. Because every image has a different
+   aspect ratio, the author picks occupied space, not pixel geometry. The
+   planner computes figure height arithmetically (`size × viewport height`),
+   so figures no longer depend on DOM measurement at all — the measured-240px
+   vs rendered-31cqw mismatch class of pagination bugs disappears.
+2. **Space policy: text yields** (unchanged). The figure keeps its size;
+   paragraphs that do not fit flow to the next scene; the legend always stays
+   with its figure. With computed heights this is now deterministic.
+3. **Auto numbering**: every figure gets "Fig. N" by order of appearance,
+   prefixed to the legend caption. No in-text cross-references.
+4. **Full-screen figure dialog replaces the popover**: a 16:9 canvas rendering
+   the real scene, a size drag handle, the legend edited inline on the canvas,
+   drag-and-drop upload/replace, and fit/filter/bg/side/split folded into an
+   Advanced section. Entry: clicking the image preview widget or syntax in the
+   editor. The small popover retires.
+5. **Syntax**: the hybrid attribute block stays; `size` becomes the primary
+   dimension. `width`/`height` and legacy Marpit tokens remain readable; every
+   dialog save migrates to the new form.
+
+### Implementation stages
+
+1. `size` attribute + planner computes figure heights + renderer honors size
+   (`31cqw` default preserved when absent) + Playwright pipeline harness
+   (markdown → measure → planScenes → SceneView) pinning that a paragraph
+   below a sized figure shares its scene.
+2. Fig. N auto numbering.
+3. Full-screen dialog; popover removal; e2e migration.
+
+### Superseded v1 follow-up
+
+The earlier pagination note is folded into stage 1: with `size`, the planner
+stops trusting figure measurements, which was the root of the strand-the-
+paragraph behavior in short viewports.
