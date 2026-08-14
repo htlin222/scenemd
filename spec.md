@@ -158,7 +158,7 @@ quality = semantic coherence
 
 Three terms of this objective are not yet implemented. `ScoreBreakdown` in `src/engine/types.ts` currently carries semantic coherence, density, breakpoint, visual balance, hierarchy, stability, and the fragmentation, orphan, crowding, and whitespace penalties. Layout quality and readability violations are unimplemented, and overflow is handled as a feasibility filter that discards overflowing candidates rather than as a scored penalty — which is why an unsplittable oversized block can still produce an overflowing scene (see #7).
 
-The formula above remains the target, not a description of the current implementation. Candidate search is likewise a greedy forward scan rather than the global optimization this objective implies (see #8).
+The formula above remains the target, not a description of the current implementation. Candidate search is a dynamic program over all feasible scene partitions of a region — globally optimal for the current scoring function, with a fixed per-scene cost so that summing mostly-positive scene scores cannot reward fragmentation.
 
 Every boundary must expose its score breakdown in development mode. A manual break has infinite priority and cannot be overridden.
 

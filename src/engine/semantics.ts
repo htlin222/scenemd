@@ -412,7 +412,13 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
   // semantic group together so pagination never strands the legend.
   blocks.forEach((block, index) => {
     if (block.type !== 'figure') return
-    block.layoutHint = block.imageOptions?.layout === 'hero' ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
+    // A `present: hero` directive has already set layoutHint by this point.
+    // The Marpit alt form defaults to 'legend', so an alt that still says
+    // 'legend' cannot be distinguished from "no preference" — the directive
+    // therefore wins over the alt default, and an explicit alt 'hero'/'auto'
+    // agrees with or refines it.
+    const directiveHero = block.layoutHint === 'hero'
+    block.layoutHint = block.imageOptions?.layout === 'hero' || directiveHero ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
     if (block.layoutHint !== 'legend') return
     const previous = blocks[index - 1]
     if (previous?.type === 'paragraph') {
