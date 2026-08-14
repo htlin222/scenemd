@@ -45,6 +45,7 @@ import { planScenes, withPresentationCover } from './engine/planner'
 import type { Density, PresentationBlock, PresentationConfig, Scene, ScenePlan, SourceRange, ThemeMode } from './engine/types'
 import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
 import { normalizeMarkdownUrls } from './lib/openevidence'
+import { downloadBlob, exportFileName } from './export'
 
 const DEMO_MARKDOWN = `# Acute Myeloid Leukemia
 
@@ -183,6 +184,64 @@ interface SaveConflictState {
   localConfig: PresentationConfig
 }
 
+interface ConflictBackup {
+  markdown: string
+  at: string
+}
+
+// A conflicting save must never silently lose the author's text (#12). The
+// losing side is stashed here the moment a 409 arrives, so it survives
+// "Use cloud version", a tab crash, and a reload.
+const conflictBackupKey = (documentId: string) => `scenemd-conflict:${documentId}`
+
+function stashConflictBackup(documentId: string, markdown: string): void {
+  try {
+    localStorage.setItem(conflictBackupKey(documentId), JSON.stringify({ markdown, at: new Date().toISOString() } satisfies ConflictBackup))
+  } catch {
+    // Storage full or unavailable — the dialog's copy/download buttons remain.
+  }
+}
+
+function readConflictBackup(documentId: string): ConflictBackup | null {
+  try {
+    const raw = localStorage.getItem(conflictBackupKey(documentId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as ConflictBackup
+    return typeof parsed.markdown === 'string' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function clearConflictBackup(documentId: string): void {
+  try {
+    localStorage.removeItem(conflictBackupKey(documentId))
+  } catch {
+    // Nothing to do.
+  }
+}
+
+/**
+ * Trim the common prefix and suffix and return the differing middles with a
+ * little context, so the conflict dialog can show what actually diverged
+ * instead of two line counts.
+ */
+function conflictExcerpts(local: string, remote: string): { local: string; remote: string } {
+  let start = 0
+  const limit = Math.min(local.length, remote.length)
+  while (start < limit && local[start] === remote[start]) start += 1
+  let localEnd = local.length
+  let remoteEnd = remote.length
+  while (localEnd > start && remoteEnd > start && local[localEnd - 1] === remote[remoteEnd - 1]) {
+    localEnd -= 1
+    remoteEnd -= 1
+  }
+  const context = 80
+  const from = Math.max(0, start - context)
+  const clip = (source: string, end: number) => `${from > 0 ? '…' : ''}${source.slice(from, Math.min(source.length, end + context))}${end + context < source.length ? '…' : ''}`
+  return { local: clip(local, localEnd), remote: clip(remote, remoteEnd) }
+}
+
 interface DeployVersion {
   deployedAt?: string
 }
@@ -314,6 +373,7 @@ function App() {
   const [apiError, setApiError] = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
   const [saveConflict, setSaveConflict] = useState<SaveConflictState | null>(null)
+  const [conflictBackup, setConflictBackup] = useState<ConflictBackup | null>(null)
   const [newerDeployTime, setNewerDeployTime] = useState<string | null>(null)
   const [refreshingDeploy, setRefreshingDeploy] = useState(false)
   const [creating, setCreating] = useState(false)
@@ -552,6 +612,11 @@ function App() {
           lastSavedPresentationConfigRef.current = JSON.stringify(config)
           lastSavedMarkdownRef.current = result.markdown
           setSaveStatus('saved')
+          if (route.kind === 'document') {
+            const backup = readConflictBackup(route.id)
+            if (backup && backup.markdown !== loadedMarkdown) setConflictBackup(backup)
+            else if (backup) clearConflictBackup(route.id)
+          }
         }
       } catch (error) {
         if (!controller.signal.aborted) setApiError(error instanceof Error ? error.message : 'Something went wrong')
@@ -583,6 +648,7 @@ function App() {
         if (response.status === 409) {
           if (result.document) {
             const localMarkdown = liveMarkdownRef.current
+            stashConflictBackup(route.id, localMarkdown)
             setSaveConflict({
               remote: result.document,
               localMarkdown,
@@ -945,11 +1011,13 @@ function App() {
       const result = await response.json() as DocumentPayload & { error?: string }
       if (response.status === 409) {
         const remote = (result as DocumentPayload & { document?: DocumentPayload }).document
+        stashConflictBackup(route.id, conflict.localMarkdown)
         if (remote) setSaveConflict((current) => current ? { ...current, remote } : current)
         setSaveStatus('conflict')
         return
       }
       if (!response.ok) throw new Error(result.error || 'Could not save your version')
+      clearConflictBackup(route.id)
       const savedMarkdown = absoluteSceneImageUrls(result.markdown)
       const savedConfig = normalizePresentationConfig(result.presentationConfig, result.title)
       lastSavedMarkdownRef.current = savedMarkdown
@@ -1114,14 +1182,30 @@ function App() {
       {saveConflict && <div className="save-conflict-backdrop" role="presentation"><aside className="save-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title">
         <div className="save-conflict-icon"><RefreshCw size={21} /></div>
         <h2 id="save-conflict-title">Two sessions edited this document</h2>
-        <p>SceneMD could not safely merge changes made to the same content. Your local Markdown is still in this editor.</p>
+        <p>SceneMD could not safely merge changes made to the same content. Your local Markdown is still in this editor, and a backup copy is kept on this device until the conflict is resolved.</p>
         <div className="save-conflict-meta"><span>Your copy</span><strong>{saveConflict.localMarkdown.split('\n').length} lines</strong><span>Cloud copy</span><strong>revision {saveConflict.remote.revision}</strong></div>
+        {(() => {
+          const excerpts = conflictExcerpts(saveConflict.localMarkdown, saveConflict.remote.markdown)
+          return <div className="save-conflict-diff">
+            <div><span>Your version</span><pre>{excerpts.local || '(empty)'}</pre></div>
+            <div><span>Cloud version</span><pre>{excerpts.remote || '(empty)'}</pre></div>
+          </div>
+        })()}
         <div className="save-conflict-actions">
           <button onClick={() => void navigator.clipboard.writeText(saveConflict.localMarkdown)}><Copy size={15} /> Copy my Markdown</button>
+          <button onClick={() => downloadBlob(new Blob([saveConflict.localMarkdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${saveConflict.localTitle} (my version)`, 'md'))}>Download .md</button>
           <button onClick={useCloudConflictVersion}>Use cloud version</button>
           <button className="is-primary" onClick={() => void keepLocalConflictVersion()}>Keep my version</button>
         </div>
       </aside></div>}
+
+      {conflictBackup && route.kind === 'document' && !saveConflict && <aside className="deploy-update-toast conflict-backup-toast" role="status" aria-live="polite">
+        <span className="deploy-update-icon"><Copy size={18} /></span>
+        <span className="deploy-update-copy"><strong>A backup from an unresolved conflict exists</strong><small>saved {new Date(conflictBackup.at).toLocaleString()} — it differs from the loaded document</small></span>
+        <button onClick={() => void navigator.clipboard.writeText(conflictBackup.markdown)}><Copy size={14} /> Copy</button>
+        <button onClick={() => downloadBlob(new Blob([conflictBackup.markdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${documentTitle} (conflict backup)`, 'md'))}>Download</button>
+        <button onClick={() => { clearConflictBackup(route.id); setConflictBackup(null) }}>Discard</button>
+      </aside>}
 
       {newerDeployTime && <aside className="deploy-update-toast" role="status" aria-live="polite">
         <span className="deploy-update-icon"><RefreshCw className={refreshingDeploy ? 'is-spinning' : ''} size={18} /></span>
