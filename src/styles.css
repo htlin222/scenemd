@@ -271,14 +271,12 @@ body.is-resizing-notes * { cursor: row-resize !important; user-select: none !imp
 .figure-dialog > header span { color: var(--muted); font-size: 12px; }
 .figure-dialog > header button { display: grid; place-items: center; width: 28px; height: 28px; color: var(--muted); background: transparent; border-radius: 5px; }
 .figure-dialog > header button:hover { color: var(--ink); background: var(--surface-muted); }
-.figure-dialog-canvas { position: relative; display: flex; gap: 2%; aspect-ratio: 16 / 9; margin: 14px 16px 0; padding: 2.2%; align-items: center; border: 1px solid var(--scene-line, var(--line)); border-radius: 6px; background: var(--scene-bg, var(--surface)); overflow: hidden; }
-.figure-dialog-media { position: relative; display: flex; align-items: center; justify-content: center; min-width: 18%; max-width: 100%; flex: 0 0 auto; }
-.figure-dialog-media img { height: 100%; max-width: 100%; object-fit: contain; }
-.figure-size-handle { position: absolute; right: -10px; bottom: -10px; z-index: 2; padding: 3px 8px; color: #fff; background: var(--accent); border-radius: 999px; font-size: 11px; font-weight: 700; cursor: ns-resize; box-shadow: 0 3px 10px rgba(14, 18, 16, 0.3); touch-action: none; }
-.figure-dialog-legend { flex: 1; align-self: stretch; display: flex; align-items: center; }
-.figure-dialog-legend textarea { width: 100%; height: 60%; padding: 8px 10px; color: var(--ink); border: 1px dashed color-mix(in srgb, var(--line) 80%, transparent); border-radius: 6px; outline: 0; background: transparent; resize: none; font: 15px/1.5 'Source Sans 3', sans-serif; }
-.figure-dialog-legend textarea:focus { border-color: var(--accent); }
-.figure-dialog-legend textarea:disabled { color: var(--muted); border-style: dotted; }
+.figure-dialog-canvas { position: relative; margin: 14px 16px 0; }
+.figure-dialog-stage { width: 100%; max-height: none; }
+.figure-size-handle { position: absolute; z-index: 3; padding: 3px 8px; color: #fff; background: var(--accent); border-radius: 999px; font-size: 11px; font-weight: 700; cursor: ns-resize; box-shadow: 0 3px 10px rgba(14, 18, 16, 0.3); touch-action: none; }
+.figure-dialog-fields textarea { min-width: 0; width: 100%; padding: 7px 9px; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; outline: 0; background: var(--surface); font: 13px/1.5 'Source Sans 3', sans-serif; resize: vertical; }
+.figure-dialog-fields textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.figure-dialog-fields textarea:disabled { color: var(--muted); background: var(--surface-muted); resize: none; }
 .figure-dialog-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 16px; }
 .figure-dialog-fields label { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .figure-dialog-fields .figure-field-wide { grid-column: 1 / -1; }

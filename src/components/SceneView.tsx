@@ -176,11 +176,12 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
       filter: imageFilterCss(block.imageOptions?.filters ?? ''),
       objectFit: block.imageOptions?.fit === 'auto' ? 'scale-down' : 'contain',
     }
-    // `size=NN%` is a fraction of the scene height; containers are inline-size
-    // so it is expressed through the 16:9 ratio (1% of height = 0.5625cqw).
+    // `size=NN%` is a fraction of the scene's content area. Containers are
+    // inline-size, so it is expressed through the 16:9 ratio times the content
+    // fraction (~84% of the stage after chrome): 1% ≈ 0.5625 × 0.84 cqw.
     const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
     const frameStyle = sized
-      ? { '--figure-height': `calc(${Number(sized[1]) * 0.5625} * 1cqw)`, maxHeight: 'none' } as CSSProperties
+      ? { '--figure-height': `calc(${Number(sized[1]) * 0.5625 * 0.84} * 1cqw)`, maxHeight: 'none' } as CSSProperties
       : block.imageOptions?.height
         ? { '--figure-height': block.imageOptions.height } as CSSProperties
         : undefined

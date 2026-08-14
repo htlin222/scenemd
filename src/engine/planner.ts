@@ -21,11 +21,13 @@ function hash(value: string): string {
   return (h >>> 0).toString(36)
 }
 
-function blockHeight(block: PresentationBlock, measurements: Map<string, number>, viewportHeight: number): number {
-  // A sized figure is pure arithmetic: `size=NN%` of the scene height. DOM
-  // measurements are ignored so pagination stays deterministic (design v2).
+function blockHeight(block: PresentationBlock, measurements: Map<string, number>, sceneBudget: number): number {
+  // A sized figure is pure arithmetic: `size=NN%` of the scene's CONTENT area
+  // (the capacity budget), so a lone size=100% figure fills a scene exactly
+  // instead of overflowing into the header chrome. DOM measurements are
+  // ignored so pagination stays deterministic (design v2).
   const sized = block.type === 'figure' ? block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/) : null
-  if (sized) return (viewportHeight * Number(sized[1])) / 100
+  if (sized) return (sceneBudget * Number(sized[1])) / 100
   const measured = measurements.get(block.id)
   if (measured) return measured
   if (block.estimatedHeight) return block.estimatedHeight
@@ -145,20 +147,20 @@ function continuationParts(block: PresentationBlock, measuredHeight: number, cap
   }))
 }
 
-function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, viewportHeight: number): number {
+function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number {
   if (chooseLayout(blocks) === 'legend') {
     const headings = blocks.filter((block) => block.type === 'heading')
     const figures = blocks.filter((block) => block.type === 'figure')
     const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
-    const headingHeight = headings.reduce((total, block) => total + blockHeight(block, measurements, viewportHeight), 0)
+    const headingHeight = headings.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
       + Math.max(0, headings.length - 1) * 20
-    const figureHeight = figures.reduce((total, block) => total + blockHeight(block, measurements, viewportHeight), 0)
+    const figureHeight = figures.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
       + Math.max(0, figures.length - 1) * 12
-    const proseHeight = prose.reduce((total, block) => total + blockHeight(block, measurements, viewportHeight), 0)
+    const proseHeight = prose.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
       + Math.max(0, prose.length - 1) * 12
     return headingHeight + (headings.length ? 20 : 0) + Math.max(figureHeight, proseHeight)
   }
-  return blocks.reduce((total, block) => total + blockHeight(block, measurements, viewportHeight), 0) + Math.max(0, blocks.length - 1) * 20
+  return blocks.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0) + Math.max(0, blocks.length - 1) * 20
 }
 
 export function chooseLayout(blocks: PresentationBlock[]): SceneLayout {
@@ -301,9 +303,9 @@ export function planScenes(
   const previousEnds = new Set(previousPlan?.scenes.map((scene) => scene.endBlockId) ?? [])
 
   for (const region of regions) {
-    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, viewportHeight), capacity, measurements))
+    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements))
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
-    const regionUsed = usedHeight(plannedBlocks, measurements, viewportHeight)
+    const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
     if (regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
       const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
       scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown))
@@ -327,7 +329,7 @@ export function planScenes(
       const candidates: Array<ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }> = []
       for (let end = pastGroup(cursor + 1); end <= plannedBlocks.length && candidates.length < 8; end = pastGroup(end + 1)) {
         const candidateBlocks = plannedBlocks.slice(cursor, end)
-        const used = usedHeight(candidateBlocks, measurements, viewportHeight)
+        const used = usedHeight(candidateBlocks, measurements, capacity)
         candidates.push({
           ...evaluate(candidateBlocks, end, plannedBlocks.length, used, capacity, density, previousEnds, plannedBlocks[end]),
           blocks: candidateBlocks,

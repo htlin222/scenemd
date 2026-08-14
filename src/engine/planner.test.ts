@@ -76,6 +76,20 @@ describe('planScenes — explicit groups', () => {
   })
 })
 
+describe('planScenes — full-bleed figures', () => {
+  it('lets a lone size=100% figure fill a scene without an overflow warning', () => {
+    // The warning the author saw: size was measured against the full stage
+    // while the budget is the content area, so ≥84% always overflowed.
+    const { blocks, regions } = regionsFrom('![chart](fig.png){size=100%} 圖說\n')
+    const plan = planScenes(regions, measure(blocks, 300), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.overflowCount).toBe(0)
+  })
+})
+
 describe('planScenes — fit test', () => {
   it('emits one scene for a region that fits comfortably', () => {
     // spec: "Comfortable regions become scenes directly."

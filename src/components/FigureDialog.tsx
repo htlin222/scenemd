@@ -1,7 +1,11 @@
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Image, LoaderCircle, Upload, X } from 'lucide-react'
-import { imageFilterCss, type MarpitImageOptions } from '../imageSyntax'
+import { type MarpitImageOptions } from '../imageSyntax'
+import { SceneView } from './SceneView'
+import { chooseLayout } from '../engine/planner'
+import { defaultPresentationConfig } from '../presentationConfig'
+import type { PresentationBlock, Scene } from '../engine/types'
 
 export interface FigureDialogState {
   url: string
@@ -23,12 +27,81 @@ function sizePercent(options: MarpitImageOptions): number {
   return match ? Math.min(100, Math.max(15, Number(match[1]))) : 55
 }
 
+const DIALOG_CONFIG = defaultPresentationConfig('Figure preview')
+
+const DIALOG_SCORES = {
+  semanticCoherence: 0, density: 0, breakpoint: 0, visualBalance: 0, hierarchy: 0,
+  stability: 0, fragmentationPenalty: 0, orphanPenalty: 0, crowdingPenalty: 0, whitespacePenalty: 0,
+}
+
+// The canvas is not a mock: the draft is rendered through the real SceneView
+// with the real scene CSS, so what the drag shows IS the size the scene gets.
+function draftScene(state: FigureDialogState): Scene {
+  const figure: PresentationBlock = {
+    id: 'figure-dialog-preview',
+    type: 'figure',
+    semanticRole: 'figure',
+    importance: 0.8,
+    keepTogether: true,
+    keepWithNext: false,
+    keepWithPrevious: false,
+    breakBefore: 'auto',
+    breakAfter: 'auto',
+    visibility: 'normal',
+    layoutHint: state.options.layout === 'hero' ? 'hero' : state.options.layout === 'auto' ? 'auto' : 'legend',
+    sourceRange: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 1 },
+    url: state.url,
+    alt: state.options.alt,
+    imageOptions: state.options,
+    caption: state.legend.trim() ? [{ type: 'text', value: state.legend.trim() }] : undefined,
+  }
+  return {
+    id: 'figure-dialog-scene',
+    role: 'content',
+    regionId: 'figure-dialog',
+    startBlockId: figure.id,
+    endBlockId: figure.id,
+    blocks: [figure],
+    layout: chooseLayout([figure]),
+    sourceRange: figure.sourceRange,
+    fillRatio: 0,
+    score: 0,
+    scores: DIALOG_SCORES,
+  }
+}
+
 export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: FigureDialogProps) {
   const canvasRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
+  const [handlePosition, setHandlePosition] = useState<{ left: number; top: number } | null>(null)
   const size = sizePercent(state.options)
+  const scene = useMemo(() => draftScene(state), [state])
+
+  useLayoutEffect(() => {
+    const reposition = () => {
+      const canvas = canvasRef.current
+      const frame = canvas?.querySelector('.figure-frame')
+      if (!canvas || !frame) {
+        setHandlePosition(null)
+        return
+      }
+      const canvasRect = canvas.getBoundingClientRect()
+      const frameRect = frame.getBoundingClientRect()
+      setHandlePosition({ left: frameRect.right - canvasRect.left - 14, top: frameRect.bottom - canvasRect.top - 14 })
+    }
+    reposition()
+    const raf = window.requestAnimationFrame(reposition)
+    const image = canvasRef.current?.querySelector('.figure-frame img')
+    image?.addEventListener('load', reposition)
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.cancelAnimationFrame(raf)
+      image?.removeEventListener('load', reposition)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [scene])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -79,34 +152,29 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
     })()
   }
 
-  const imageStyle: CSSProperties = {
-    filter: imageFilterCss(state.options.filters),
-    objectFit: state.options.fit === 'auto' ? 'scale-down' : 'contain',
-  }
-
   return createPortal(
     <div className="figure-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
       <section className="figure-dialog" role="dialog" aria-modal="true" aria-label="Figure editor">
         <header>
-          <div><Image size={17} /><strong>Figure</strong><span>{state.legendEditable ? 'size on the 16:9 scene · legend beside it' : 'this image shares its paragraph, legend editing is off'}</span></div>
+          <div><Image size={17} /><strong>Figure</strong><span>true-scale 16:9 scene preview · drag the handle to size the figure</span></div>
           <button onClick={onCancel} aria-label="Close figure editor"><X size={16} /></button>
         </header>
         <div className="figure-dialog-canvas" ref={canvasRef}>
-          <div className="figure-dialog-media" style={{ height: `${size}%` }}>
-            <img src={state.url} alt={state.options.alt} style={imageStyle} />
-            <button className="figure-size-handle" onPointerDown={beginResize} title="Drag vertically to resize" aria-label={`Figure size ${Math.round(size)} percent of the scene, drag to change`}>{Math.round(size)}%</button>
+          <div className="stage-shell figure-dialog-stage">
+            <SceneView scene={scene} sceneNumber={1} sceneCount={1} presentationConfig={DIALOG_CONFIG} />
           </div>
-          <div className="figure-dialog-legend">
-            <textarea
-              aria-label="Legend text"
-              value={state.legend}
-              disabled={!state.legendEditable}
-              onChange={(event) => onChange({ legend: event.target.value })}
-              placeholder="Legend text shown beside the figure"
-            />
-          </div>
+          {handlePosition && (
+            <button
+              className="figure-size-handle"
+              style={{ left: handlePosition.left, top: handlePosition.top }}
+              onPointerDown={beginResize}
+              title="Drag vertically to resize"
+              aria-label={`Figure size ${Math.round(size)} percent of the scene, drag to change`}
+            >{Math.round(size)}%</button>
+          )}
         </div>
         <div className="figure-dialog-fields">
+          <label className="figure-field-wide"><span>Legend text</span><textarea rows={2} value={state.legend} disabled={!state.legendEditable} onChange={(event) => onChange({ legend: event.target.value })} placeholder="Legend text shown beside the figure" title={state.legendEditable ? 'Saved into the same paragraph as the image; previewed live on the canvas' : 'This image shares its paragraph with other content, so the legend cannot be edited here'} /></label>
           <label className="figure-field-wide"><span>Image URL</span><input value={state.url} onChange={(event) => onChange({ url: event.target.value })} /></label>
           <label className="figure-field-wide"><span>Alt text</span><input value={state.options.alt} onChange={(event) => onChange({ alt: event.target.value })} placeholder="Describe this image for screen readers" /></label>
           <div className="figure-dialog-upload">

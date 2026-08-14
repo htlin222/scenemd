@@ -36,7 +36,8 @@ test('the rendered figure honors size as a fraction of the scene height', async 
   const plan = JSON.parse(await page.getByTestId('plan-json').innerText()) as PlanJson
   const frame = page.locator('[data-testid="scene-0"] .figure-frame')
   const box = await frame.boundingBox()
-  const expected = 0.45 * plan.viewport.height
-  // Planner arithmetic and CSS rendering must agree on what size=45% means.
+  // size% is a fraction of the scene's CONTENT area (~84% of the stage after
+  // chrome); planner arithmetic and CSS rendering must agree on that basis.
+  const expected = 0.45 * 0.84 * plan.viewport.height
   expect(Math.abs((box?.height ?? 0) - expected)).toBeLessThan(10)
 })
