@@ -31,7 +31,8 @@ import {
   X,
 } from 'lucide-react'
 import { buildCitationReferenceMap, SceneView, sceneSpeakerNotes } from './components/SceneView'
-import { MarkdownDocumentView, MarkdownEditor, type EditorMode } from './components/MarkdownEditor'
+import { MarkdownEditor, type EditorMode } from './components/MarkdownEditor'
+import { MarkdownDocumentView } from './components/editor/MarkdownDocumentView'
 import { PresentationSettingsDialog } from './components/PresentationSettingsDialog'
 import { HackMDSyncDialog } from './components/HackMDSyncDialog'
 import { BibliographyDialog } from './components/BibliographyDialog'
