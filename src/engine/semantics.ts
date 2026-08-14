@@ -263,6 +263,24 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
       block.importance = 0.8
       return [block]
     }
+    // HackMD imsize (`![alt](url =WxH)`) fails CommonMark image parsing and
+    // arrives as literal text; recover it as a figure with pixel dimensions.
+    const imsize = images.length === 0
+      ? textOf(node).match(/^!\[([^\]]*)\]\((\S+)\s+=(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)?\)\s*([\s\S]*)$/)
+      : null
+    if (imsize) {
+      const block = baseBlock(node, index, 'figure')
+      block.semanticRole = 'figure'
+      block.url = imsize[2]
+      block.imageOptions = parseImageAttributes(imsize[1], null)
+      block.imageOptions.width = `${imsize[3]}px`
+      if (imsize[4]) block.imageOptions.height = `${imsize[4]}px`
+      block.alt = block.imageOptions.alt || 'Presentation figure'
+      const trailing = imsize[5].trim()
+      block.caption = trailing ? [{ type: 'text', value: trailing }] : undefined
+      block.importance = 0.8
+      return [block]
+    }
     const block = baseBlock(node, index, 'paragraph')
     block.inlines = inlineOf(node.children)
     block.keepTogether = true
@@ -331,7 +349,17 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
 }
 
 export function parsePresentationDocument(markdown: string): PresentationBlock[] {
-  const tree = processor.runSync(processor.parse(markdown)) as MdNode
+  // HackMD reveal.js compatibility: a leading YAML frontmatter block must not
+  // become content. It is masked with blank lines (not stripped) so every
+  // sourceRange below keeps its real line number for editor↔scene sync.
+  const frontmatter = markdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)
+  let source = markdown
+  let isSlideDocument = false
+  if (frontmatter) {
+    isSlideDocument = /^type:\s*slide\s*$/m.test(frontmatter[1])
+    source = frontmatter[0].replace(/[^\n]+/g, '') + markdown.slice(frontmatter[0].length)
+  }
+  const tree = processor.runSync(processor.parse(source)) as MdNode
   const blocks: PresentationBlock[] = []
   let directives: Directives = {}
   let referencesDepth: number | null = null
@@ -396,6 +424,9 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
         activeGroup = null
         continue
       }
+      // reveal.js per-slide/per-element directives from HackMD decks are
+      // presentation hints for another engine, never speaker notes.
+      if (/^\.(?:slide|element):/.test(comment)) continue
       const directive = parseDirective(comment)
       if (directive) directives = { ...directives, ...directive }
       else if (comment && !isMarpDirective(comment)) {
@@ -415,6 +446,20 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       const label = textOf(node).trim().toLowerCase()
       if ((node.depth ?? 4) <= (referencesDepth ?? 0) && label !== 'references') referencesDepth = null
       if (label === 'references' && node.depth === 3) referencesDepth = 3
+    }
+    // reveal.js speaker notes: only documents declaring `type: slide` treat a
+    // `Note:` paragraph as notes — ordinary prose legitimately starts with it.
+    if (isSlideDocument && node.type === 'paragraph') {
+      const noteMatch = textOf(node).match(/^Note:\s*([\s\S]*)$/i)
+      if (noteMatch) {
+        const target = lastAuthoredBlock()
+        const note = noteMatch[1].trim()
+        if (target) {
+          target.speakerNotes = [...(target.speakerNotes ?? []), note]
+          target.speakerNoteRanges = [...(target.speakerNoteRanges ?? []), rangeOf(node)]
+        } else pendingSpeakerNotes.push({ text: note, range: rangeOf(node) })
+        continue
+      }
     }
     const normalized = makeBlocks(node, index)
     if (activeColumns && node.type === 'heading' && node.depth === 3 && activeColumns[activeColumns.length - 1].length) activeColumns.push([])

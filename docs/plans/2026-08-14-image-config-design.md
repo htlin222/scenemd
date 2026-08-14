@@ -119,6 +119,24 @@ must-share-the-scene.
   never evicted; that state is an authoring error surfaced to the author.
 - Ungrouped text flows freely across scenes (text yields, as before).
 
+## v4 — HackMD reveal.js downward compatibility (2026-08-14)
+
+The syntax must degrade gracefully in both directions with HackMD's
+reveal.js slide mode. The contract, each clause verified by a parser test:
+
+| HackMD / reveal input | SceneMD behavior |
+| --- | --- |
+| YAML frontmatter (`type: slide`, `slideOptions`) | Masked with blank lines before parsing — never content, and source line numbers below stay accurate for editor↔scene sync. |
+| `---` / `----` slide separators | Already aligned: thematic breaks are scene breaks. |
+| `<!-- .slide: … -->` / `<!-- .element: … -->` | Ignored (they are directives for another engine) — previously they were swallowed as speaker notes. |
+| `Note:` paragraph | Becomes a speaker note **only when the frontmatter declares `type: slide`** — ordinary prose legitimately starts with "Note:", so the gate keeps the conversion deterministic. |
+| `![alt](url =300x200)` imsize | Fails CommonMark image parsing (arrives as literal text); recovered as a figure with pixel width/height and same-paragraph caption. |
+| SceneMD → HackMD | `present:` comments and `{…}` blocks are invisible or inert in reveal mode; the legend renders as a plain paragraph. |
+
+Known non-goals for now: mapping `.slide: data-background` onto SceneMD
+background figures, and emitting imsize on save (SceneMD always writes the
+hybrid attribute block).
+
 ### Superseded v1 follow-up
 
 The earlier pagination note is folded into stage 1: with `size`, the planner

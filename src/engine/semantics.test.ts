@@ -60,6 +60,50 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(figures.map((figure) => figure.figureNumber)).toEqual([1, 2, 3])
   })
 
+  it('masks HackMD YAML frontmatter without shifting source lines', () => {
+    // compat: HackMD slide docs open with `--- type: slide ---`; the YAML must
+    // not become content, and line numbers below it must stay accurate.
+    const blocks = parsePresentationDocument('---\ntype: slide\nslideOptions:\n  transition: slide\n---\n\n# Real title\n')
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].type).toBe('heading')
+    expect(blocks[0].sourceRange.startLine).toBe(7)
+  })
+
+  it('ignores reveal.js slide and element directives instead of turning them into notes', () => {
+    const blocks = parsePresentationDocument('<!-- .slide: data-background="https://x.com/bg.jpg" -->\n\n#### Title\n\n<!-- .element: class="fragment" -->\n\nBody text.\n')
+    const withNotes = blocks.filter((block) => block.speakerNotes?.length)
+    expect(withNotes).toHaveLength(0)
+    expect(blocks.map((block) => block.type)).toEqual(['heading', 'paragraph'])
+  })
+
+  it('converts Note: paragraphs to speaker notes only in type: slide documents', () => {
+    const slideDoc = parsePresentationDocument('---\ntype: slide\n---\n\n# Title\n\nBody.\n\nNote: 這裡是講稿內容\n')
+    const noteHolder = slideDoc.find((block) => block.speakerNotes?.length)
+    expect(noteHolder?.speakerNotes).toEqual(['這裡是講稿內容'])
+    expect(slideDoc.filter((block) => block.type === 'paragraph')).toHaveLength(1)
+
+    const plainDoc = parsePresentationDocument('# Title\n\nNote: this stays body text in ordinary documents\n')
+    expect(plainDoc.filter((block) => block.type === 'paragraph')).toHaveLength(1)
+    expect(plainDoc.some((block) => block.speakerNotes?.length)).toBe(false)
+  })
+
+  it('reads HackMD imsize dimensions into a figure', () => {
+    const blocks = parsePresentationDocument('![Chest X-ray](https://x.com/a.png =300x200)\n')
+    const figure = find(blocks, 'figure')
+    expect(figure?.url).toBe('https://x.com/a.png')
+    expect(figure?.imageOptions?.width).toBe('300px')
+    expect(figure?.imageOptions?.height).toBe('200px')
+    expect(figure?.alt).toBe('Chest X-ray')
+  })
+
+  it('reads width-only imsize and keeps trailing text as the caption', () => {
+    const blocks = parsePresentationDocument('![scan](https://x.com/b.png =480x) 圖一：胸腔電腦斷層\n')
+    const figure = find(blocks, 'figure')
+    expect(figure?.imageOptions?.width).toBe('480px')
+    expect(figure?.imageOptions?.height).toBe('')
+    expect(JSON.stringify(figure?.caption ?? [])).toContain('圖一：胸腔電腦斷層')
+  })
+
   it('normalizes an image and its caption into one atomic figure', () => {
     // spec: "Image and caption normalize into one atomic figure."
     const blocks = parsePresentationDocument('![w:520px Bone marrow](marrow.jpg)\n')
