@@ -232,6 +232,14 @@ function makeScene(
   const first = blocks[0]
   const last = blocks[blocks.length - 1]
   const fillRatio = used / capacity
+  // spec: "unintentional hard overflow = 0". When content genuinely cannot
+  // fit — a single unsplittable block taller than the capacity — the overflow
+  // is intentional but must never be silent (#7). SceneView renders this.
+  const warning = fillRatio > 1
+    ? blocks.length === 1
+      ? `${first.type === 'figure' ? 'Image' : first.type === 'math' ? 'Display math' : first.type === 'table' ? 'Table' : 'This block'} is taller than the scene by ${Math.round((fillRatio - 1) * 100)}% and cannot be split`
+      : `Content overflows this scene by ${Math.round((fillRatio - 1) * 100)}%`
+    : undefined
   return {
     id: `scene-${hash(`${region.id}:${first.id}:${last.id}`)}`,
     role: first.type === 'heading' && first.depth === 1 ? 'chapter' : 'content',
@@ -248,7 +256,7 @@ function makeScene(
     fillRatio,
     score,
     scores,
-    warning: undefined,
+    warning,
     continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
   }
