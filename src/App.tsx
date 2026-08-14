@@ -38,37 +38,36 @@ import { BibliographyDialog } from './components/BibliographyDialog'
 import { ExportDialog } from './components/ExportDialog'
 import { PresenterWindow } from './components/PresenterWindow'
 import { PresentationRuntimeTools } from './components/PresentationRuntimeTools'
-import type { Density, PresentationConfig, ThemeMode } from './engine/types'
-import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
+import type { Density, ThemeMode } from './engine/types'
 import { downloadBlob, exportFileName } from './export'
 import { DEMO_MARKDOWN } from './app/constants'
 import { Cheatsheet } from './app/CheatsheetDialog'
 import { DocumentsHome, useDocumentLibrary } from './app/DocumentsHome'
 import { MeasurementRoot, useMeasuredPlan } from './app/useMeasuredPlan'
+import { useDocument } from './app/useDocument'
 import { LlmPromptDialog } from './app/LlmPromptDialog'
 import {
   CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
-  type Route, type SaveStatus, type HeaderActionSpec, type DocumentPayload,
-  type SaveConflictState, type ConflictBackup, type DeployVersion,
-  directHeaderActionCount, stashConflictBackup, readConflictBackup, clearConflictBackup, conflictExcerpts,
-  getInitialTheme, parseRoute, titleFromMarkdown, absoluteSceneImageUrls, formatDeployTime,
+  type Route, type HeaderActionSpec,
+  type DeployVersion,
+  directHeaderActionCount, conflictExcerpts,
+  getInitialTheme, parseRoute, titleFromMarkdown, formatDeployTime,
   previewViewport, blockRevealSteps, updateSceneSpeakerNote, sceneTranscriptText,
 } from './app/shared'
 function App() {
   const [route, setRoute] = useState<Route>(parseRoute)
-  const [markdown, setMarkdown] = useState('')
-  const [documentTitle, setDocumentTitle] = useState('Untitled document')
-  const [documentRevision, setDocumentRevision] = useState(0)
-  const [presentationConfig, setPresentationConfig] = useState<PresentationConfig>(() => defaultPresentationConfig('Untitled document'))
-  const [loading, setLoading] = useState(true)
-  const [apiError, setApiError] = useState<string | null>(null)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
-  const [saveConflict, setSaveConflict] = useState<SaveConflictState | null>(null)
-  const [conflictBackup, setConflictBackup] = useState<ConflictBackup | null>(null)
+  const {
+    markdown, setMarkdown,
+    documentTitle, setDocumentTitle,
+    presentationConfig, setPresentationConfig,
+    loading, apiError, clearApiError,
+    saveStatus, saveConflict, useCloudConflictVersion, keepLocalConflictVersion,
+    conflictBackup, discardConflictBackup,
+    shareLink, dismissShareLink, shareBusy, createShareLink,
+    adoptServerDocument,
+  } = useDocument(route)
   const [newerDeployTime, setNewerDeployTime] = useState<string | null>(null)
   const [refreshingDeploy, setRefreshingDeploy] = useState(false)
-  const [shareLink, setShareLink] = useState<string | null>(null)
-  const [shareBusy, setShareBusy] = useState(false)
   const [density, setDensity] = useState<Density>('balanced')
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
   const [debug, setDebug] = useState(false)
@@ -105,14 +104,8 @@ function App() {
   const [presentationZoom, setPresentationZoom] = useState(1)
   const [viewport, setViewport] = useState({ width: 960, height: 540 })
   const previewRef = useRef<HTMLDivElement>(null)
-  const lastSavedMarkdownRef = useRef('')
-  const lastSavedPresentationConfigRef = useRef(JSON.stringify(defaultPresentationConfig('Untitled document')))
-  const liveMarkdownRef = useRef(markdown)
-  const livePresentationConfigRef = useRef(presentationConfig)
   const resizingPreviewRef = useRef(false)
   const headerOverflowRef = useRef<HTMLDivElement>(null)
-  liveMarkdownRef.current = markdown
-  livePresentationConfigRef.current = presentationConfig
 
   const { blocks, regions, plan, measuring, measureRef } = useMeasuredPlan(
     markdown, viewport, density, theme, presenting, presentationConfig,
@@ -231,7 +224,7 @@ function App() {
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, '', path)
     setRoute(parseRoute(path))
-    setApiError(null)
+    clearApiError()
     setShowPreview(false)
     setSceneIndex(0)
   }, [])
@@ -282,97 +275,6 @@ function App() {
     document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1e1f21' : '#ffffff')
     localStorage.setItem('scenemd-theme', theme)
   }, [theme])
-
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    setApiError(null)
-    setShareLink(null)
-
-    const load = async () => {
-      try {
-        if (route.kind === 'home') {
-          // The list itself is fetched by useDocumentLibrary; this effect only
-          // resets the editor state left over from a document route.
-          setMarkdown('')
-          setPresentationConfig(defaultPresentationConfig('Untitled document'))
-        } else {
-          const response = await fetch(route.kind === 'document' ? `/api/documents/${route.id}` : `/api/share/${route.token}`, { signal: controller.signal })
-          const result = await response.json() as DocumentPayload & { error?: string }
-          if (!response.ok) throw new Error(result.error || 'Could not load document')
-          const loadedMarkdown = absoluteSceneImageUrls(result.markdown)
-          setMarkdown(loadedMarkdown)
-          setDocumentTitle(result.title)
-          setDocumentRevision(result.revision)
-          const config = normalizePresentationConfig(result.presentationConfig, result.title)
-          setPresentationConfig(config)
-          lastSavedPresentationConfigRef.current = JSON.stringify(config)
-          lastSavedMarkdownRef.current = result.markdown
-          setSaveStatus('saved')
-          if (route.kind === 'document') {
-            const backup = readConflictBackup(route.id)
-            if (backup && backup.markdown !== loadedMarkdown) setConflictBackup(backup)
-            else if (backup) clearConflictBackup(route.id)
-          }
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setApiError(error instanceof Error ? error.message : 'Something went wrong')
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [route])
-
-  useEffect(() => {
-    const serializedConfig = JSON.stringify(presentationConfig)
-    if (route.kind !== 'document' || loading || saveConflict || (markdown === lastSavedMarkdownRef.current && serializedConfig === lastSavedPresentationConfigRef.current)) return
-    const snapshot = markdown
-    const snapshotConfig = presentationConfig
-    const snapshotTitle = titleFromMarkdown(snapshot, documentTitle)
-    const baseRevision = documentRevision
-    const baseMarkdown = lastSavedMarkdownRef.current
-    const timer = window.setTimeout(async () => {
-      setSaveStatus('saving')
-      try {
-        const response = await fetch(`/api/documents/${route.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ markdown: snapshot, baseMarkdown, title: snapshotTitle, presentationConfig: snapshotConfig, baseRevision }),
-        })
-        const result = await response.json() as DocumentPayload & { error?: string; document?: DocumentPayload; merged?: boolean }
-        if (response.status === 409) {
-          if (result.document) {
-            const localMarkdown = liveMarkdownRef.current
-            stashConflictBackup(route.id, localMarkdown)
-            setSaveConflict({
-              remote: result.document,
-              localMarkdown,
-              localTitle: titleFromMarkdown(localMarkdown, documentTitle),
-              localConfig: livePresentationConfigRef.current,
-            })
-          }
-          setSaveStatus('conflict')
-          return
-        }
-        if (!response.ok) throw new Error(result.error || 'Save failed')
-        const savedMarkdown = absoluteSceneImageUrls(result.markdown)
-        const savedConfig = normalizePresentationConfig(result.presentationConfig, result.title)
-        lastSavedMarkdownRef.current = savedMarkdown
-        lastSavedPresentationConfigRef.current = JSON.stringify(savedConfig)
-        if (savedMarkdown !== snapshot) setMarkdown((current) => current === snapshot ? savedMarkdown : current)
-        if (JSON.stringify(savedConfig) !== serializedConfig) setPresentationConfig((current) => current === snapshotConfig ? savedConfig : current)
-        setDocumentRevision(result.revision)
-        setDocumentTitle(result.title)
-        setSaveConflict(null)
-        setSaveStatus('saved')
-      } catch {
-        setSaveStatus('offline')
-      }
-    }, 650)
-    return () => window.clearTimeout(timer)
-  }, [markdown, presentationConfig, documentRevision, documentTitle, loading, route, saveConflict])
 
   useLayoutEffect(() => {
     if (!previewRef.current) return
@@ -603,80 +505,6 @@ function App() {
 
 
 
-  const createShareLink = async () => {
-    if (route.kind !== 'document') return
-    setShareBusy(true)
-    try {
-      const response = await fetch(`/api/documents/${route.id}/share`, { method: 'POST' })
-      const result = await response.json() as { sharePath?: string; error?: string }
-      if (!response.ok || !result.sharePath) throw new Error(result.error || 'Could not create share link')
-      const link = new URL(result.sharePath, window.location.origin).toString()
-      setShareLink(link)
-      await navigator.clipboard.writeText(link).catch(() => undefined)
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not create share link')
-    } finally {
-      setShareBusy(false)
-    }
-  }
-
-  const useCloudConflictVersion = () => {
-    if (!saveConflict) return
-    const remote = saveConflict.remote
-    const remoteMarkdown = absoluteSceneImageUrls(remote.markdown)
-    const remoteConfig = normalizePresentationConfig(remote.presentationConfig, remote.title)
-    lastSavedMarkdownRef.current = remoteMarkdown
-    lastSavedPresentationConfigRef.current = JSON.stringify(remoteConfig)
-    setMarkdown(remoteMarkdown)
-    setDocumentTitle(remote.title)
-    setDocumentRevision(remote.revision)
-    setPresentationConfig(remoteConfig)
-    setSaveConflict(null)
-    setSaveStatus('saved')
-  }
-
-  const keepLocalConflictVersion = async () => {
-    if (!saveConflict || route.kind !== 'document') return
-    const conflict = saveConflict
-    setSaveStatus('saving')
-    try {
-      const response = await fetch(`/api/documents/${route.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          markdown: conflict.localMarkdown,
-          baseMarkdown: conflict.remote.markdown,
-          title: conflict.localTitle,
-          presentationConfig: conflict.localConfig,
-          baseRevision: conflict.remote.revision,
-        }),
-      })
-      const result = await response.json() as DocumentPayload & { error?: string }
-      if (response.status === 409) {
-        const remote = (result as DocumentPayload & { document?: DocumentPayload }).document
-        stashConflictBackup(route.id, conflict.localMarkdown)
-        if (remote) setSaveConflict((current) => current ? { ...current, remote } : current)
-        setSaveStatus('conflict')
-        return
-      }
-      if (!response.ok) throw new Error(result.error || 'Could not save your version')
-      clearConflictBackup(route.id)
-      const savedMarkdown = absoluteSceneImageUrls(result.markdown)
-      const savedConfig = normalizePresentationConfig(result.presentationConfig, result.title)
-      lastSavedMarkdownRef.current = savedMarkdown
-      lastSavedPresentationConfigRef.current = JSON.stringify(savedConfig)
-      setMarkdown(savedMarkdown)
-      setDocumentTitle(result.title)
-      setDocumentRevision(result.revision)
-      setPresentationConfig(savedConfig)
-      setSaveConflict(null)
-      setSaveStatus('saved')
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not resolve save conflict')
-      setSaveStatus('conflict')
-    }
-  }
-
   const renderThemeButton = (inOverflow = false) => (
     <button className={inOverflow ? 'header-overflow-item' : 'icon-button'} onClick={() => { setTheme((value) => value === 'light' ? 'dark' : 'light'); if (inOverflow) setHeaderOverflowOpen(false) }} title={`Use ${theme === 'light' ? 'dark' : 'light'} mode`} aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} mode`}>
       {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
@@ -791,17 +619,9 @@ function App() {
       {showBibliography && <BibliographyDialog markdown={markdown} documentTitle={documentTitle} onClose={() => setShowBibliography(false)} />}
       {showExport && <ExportDialog markdown={markdown} title={documentTitle} scenes={plan.scenes} presentationConfig={presentationConfig} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onClose={() => setShowExport(false)} />}
       {showPresentationSettings && <PresentationSettingsDialog value={presentationConfig} onSave={(config) => { setPresentationConfig(config); setSceneIndex(0) }} onClose={() => setShowPresentationSettings(false)} />}
-      {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={(document) => {
-        setMarkdown(absoluteSceneImageUrls(document.markdown))
-        setDocumentTitle(document.title)
-        setDocumentRevision(document.revision)
-        setPresentationConfig(document.presentationConfig)
-        lastSavedMarkdownRef.current = document.markdown
-        lastSavedPresentationConfigRef.current = JSON.stringify(document.presentationConfig)
-        setSaveStatus('saved')
-      }} />}
+      {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={adoptServerDocument} />}
       {presenterWindow && !presenterWindow.closed && <PresenterWindow target={presenterWindow} scenes={plan.scenes} sceneIndex={sceneIndex} revealIndex={revealIndex} presentationConfig={presentationConfig} citationReferences={citationReferences} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onPrevious={goPrevious} onNext={goNext} onBlack={() => setBlank((value) => value === 'black' ? null : 'black')} onClosed={closePresenterWindow} />}
-      {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareLink(null) }}><aside className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => setShareLink(null)}>Done</button></aside></div>}
+      {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissShareLink() }}><aside className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => dismissShareLink()}>Done</button></aside></div>}
       {saveConflict && <div className="save-conflict-backdrop" role="presentation"><aside className="save-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title">
         <div className="save-conflict-icon"><RefreshCw size={21} /></div>
         <h2 id="save-conflict-title">Two sessions edited this document</h2>
@@ -827,7 +647,7 @@ function App() {
         <span className="deploy-update-copy"><strong>A backup from an unresolved conflict exists</strong><small>saved {new Date(conflictBackup.at).toLocaleString()} — it differs from the loaded document</small></span>
         <button onClick={() => void navigator.clipboard.writeText(conflictBackup.markdown)}><Copy size={14} /> Copy</button>
         <button onClick={() => downloadBlob(new Blob([conflictBackup.markdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${documentTitle} (conflict backup)`, 'md'))}>Download</button>
-        <button onClick={() => { clearConflictBackup(route.id); setConflictBackup(null) }}>Discard</button>
+        <button onClick={discardConflictBackup}>Discard</button>
       </aside>}
 
       {newerDeployTime && <aside className="deploy-update-toast" role="status" aria-live="polite">
