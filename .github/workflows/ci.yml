@@ -22,3 +22,26 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Self-contained: launches wrangler pages dev (local D1/R2/DO, AI
+      # stripped — no Cloudflare credentials in CI) plus headless Chrome.
+      - run: node tools/browser-check.mjs
+        env:
+          SCENEMD_NO_AI: "1"
+          CHROME_PATH: /usr/bin/google-chrome
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-screenshots
+          path: artifacts/*.png
+          if-no-files-found: ignore
