@@ -11,7 +11,8 @@
 .scene {
   --template-teal: #3d6869;
   --template-text: #111;
-  --template-muted: #999;
+  /* AA: 4.78:1 on #fff (was #999 at 2.85:1) */
+  --template-muted: #6e746f;
   --template-faint: #b0b0b0;
   --template-line: #e0e0e0;
   --template-callout: #ecedef;
@@ -41,7 +42,8 @@
 .scene[data-presentation-theme='editorial'] {
   --template-teal: #9a3412;
   --template-text: #2f2923;
-  --template-muted: #7c6f64;
+  /* AA: 4.61:1 on #f7f1e8 (was #7c6f64 at 4.33:1) */
+  --template-muted: #776b60;
   --template-faint: #a89a8e;
   --template-line: #d9cfc2;
   --template-callout: #eee4d7;
@@ -61,7 +63,8 @@
 .scene[data-presentation-theme='catppuccin'] {
   --template-teal: #8839ef;
   --template-text: #4c4f69;
-  --template-muted: #6c6f85;
+  /* Latte subtext1 — AA 5.53:1 (subtext0 #6c6f85 was 4.37:1) */
+  --template-muted: #5c5f77;
   --template-faint: #9ca0b0;
   --template-line: #ccd0da;
   --template-callout: #e6e9ef;

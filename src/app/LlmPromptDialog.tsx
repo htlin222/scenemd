@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, X } from 'lucide-react'
 import { SCENEMD_LLM_PROMPT } from './constants'
+import { useModalFocus } from './useModalFocus'
 
 export function LlmPromptDialog({ onClose }: { onClose: () => void }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -18,7 +20,7 @@ export function LlmPromptDialog({ onClose }: { onClose: () => void }) {
   }
 
   return <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <dialog open className="llm-prompt-dialog" aria-modal="true" aria-labelledby="llm-prompt-title">
+    <dialog open ref={dialogRef} className="llm-prompt-dialog" aria-modal="true" aria-labelledby="llm-prompt-title">
       <div className="cheatsheet-heading"><div><span>Reusable prompt</span><h2 id="llm-prompt-title">Prepare content for SceneMD</h2></div><button className="icon-button" onClick={onClose} aria-label="Close LLM prompt"><X size={18} /></button></div>
       <div className="llm-prompt-content">
         <p>Copy this into any LLM, then replace the final placeholder with your source content.</p>

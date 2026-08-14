@@ -44,6 +44,8 @@ import { downloadBlob, exportFileName } from './export'
 import { DEMO_MARKDOWN } from './app/constants'
 import { Cheatsheet } from './app/CheatsheetDialog'
 import { DocumentsHome, useDocumentLibrary } from './app/DocumentsHome'
+import { ShareDialog } from './app/ShareDialog'
+import { ConflictDialog } from './app/ConflictDialog'
 import { MeasurementRoot, useMeasuredPlan } from './app/useMeasuredPlan'
 import { useDocument } from './app/useDocument'
 import { usePresentationRuntime } from './app/usePresentationRuntime'
@@ -52,7 +54,7 @@ import {
   CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
   type Route, type HeaderActionSpec,
   type DeployVersion,
-  directHeaderActionCount, conflictExcerpts,
+  directHeaderActionCount,
   getInitialTheme, parseRoute, titleFromMarkdown, formatDeployTime,
   previewViewport, blockRevealSteps, updateSceneSpeakerNote, sceneTranscriptText,
 } from './app/shared'
@@ -528,26 +530,8 @@ function App() {
       {showPresentationSettings && <PresentationSettingsDialog value={presentationConfig} onSave={(config) => { setPresentationConfig(config); setSceneIndex(0) }} onClose={() => setShowPresentationSettings(false)} />}
       {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={adoptServerDocument} />}
       {presenterWindow && !presenterWindow.closed && <PresenterWindow target={presenterWindow} scenes={plan.scenes} sceneIndex={sceneIndex} revealIndex={revealIndex} presentationConfig={presentationConfig} citationReferences={citationReferences} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onPrevious={goPrevious} onNext={goNext} onBlack={() => setBlank((value) => value === 'black' ? null : 'black')} onClosed={closePresenterWindow} />}
-      {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) dismissShareLink() }}><dialog open className="share-dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => dismissShareLink()}>Done</button></dialog></div>}
-      {saveConflict && <div className="save-conflict-backdrop" role="presentation"><aside className="save-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title">
-        <div className="save-conflict-icon"><RefreshCw size={21} /></div>
-        <h2 id="save-conflict-title">Two sessions edited this document</h2>
-        <p>SceneMD could not safely merge changes made to the same content. Your local Markdown is still in this editor, and a backup copy is kept on this device until the conflict is resolved.</p>
-        <div className="save-conflict-meta"><span>Your copy</span><strong>{saveConflict.localMarkdown.split('\n').length} lines</strong><span>Cloud copy</span><strong>revision {saveConflict.remote.revision}</strong></div>
-        {(() => {
-          const excerpts = conflictExcerpts(saveConflict.localMarkdown, saveConflict.remote.markdown)
-          return <div className="save-conflict-diff">
-            <div><span>Your version</span><pre>{excerpts.local || '(empty)'}</pre></div>
-            <div><span>Cloud version</span><pre>{excerpts.remote || '(empty)'}</pre></div>
-          </div>
-        })()}
-        <div className="save-conflict-actions">
-          <button onClick={() => void navigator.clipboard.writeText(saveConflict.localMarkdown)}><Copy size={15} /> Copy my Markdown</button>
-          <button onClick={() => downloadBlob(new Blob([saveConflict.localMarkdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${saveConflict.localTitle} (my version)`, 'md'))}>Download .md</button>
-          <button onClick={useCloudConflictVersion}>Use cloud version</button>
-          <button className="is-primary" onClick={() => void keepLocalConflictVersion()}>Keep my version</button>
-        </div>
-      </aside></div>}
+      {shareLink && <ShareDialog shareLink={shareLink} onClose={dismissShareLink} />}
+      {saveConflict && <ConflictDialog conflict={saveConflict} onUseCloud={useCloudConflictVersion} onKeepLocal={() => void keepLocalConflictVersion()} />}
 
       {conflictBackup && route.kind === 'document' && !saveConflict && <output className="deploy-update-toast conflict-backup-toast">
         <span className="deploy-update-icon"><Copy size={18} /></span>

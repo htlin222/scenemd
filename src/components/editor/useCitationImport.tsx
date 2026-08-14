@@ -8,6 +8,7 @@ import {
   normalizeCitationIdentifier,
   type CitationIdentifier,
 } from '../../citations'
+import { useModalFocus } from '../../app/useModalFocus'
 
 /**
  * DOI / PubMed citation lookup and insertion with AMA formatting.
@@ -131,11 +132,12 @@ export function CitationImportDialog({ state, lookup, onChange, onClose, onInser
   onClose: () => void
   onInsert: () => void
 }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   return createPortal(<div className="citation-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <dialog open className="citation-import-dialog" aria-modal="true" aria-labelledby="citation-import-title">
+    <dialog open ref={dialogRef} className="citation-import-dialog" aria-modal="true" aria-labelledby="citation-import-title">
       <header><div><BookPlus size={18} /><div><small>AMA CSL</small><h2 id="citation-import-title">Insert citation</h2></div></div><button onClick={onClose} aria-label="Close citation import"><X size={18} /></button></header>
       <div className="citation-import-body">
-        <label><span>DOI or PubMed ID</span><input ref={(node) => node?.focus()} value={state.identifier} onChange={(event) => onChange((current) => current ? { ...current, identifier: event.target.value } : current)} placeholder="10.1016/j.chest.2024.09.016 or PMID: 28012456" /></label>
+        <label><span>DOI or PubMed ID</span><input data-autofocus value={state.identifier} onChange={(event) => onChange((current) => current ? { ...current, identifier: event.target.value } : current)} placeholder="10.1016/j.chest.2024.09.016 or PMID: 28012456" /></label>
         <div className={`citation-lookup-status is-${lookup.status}`}>
           {lookup.status === 'idle' && <span>Paste a DOI, PMID, or PubMed article URL.</span>}
           {lookup.status === 'loading' && <span><LoaderCircle className="is-spinning" size={14} /> Formatting with AMA CSL…</span>}

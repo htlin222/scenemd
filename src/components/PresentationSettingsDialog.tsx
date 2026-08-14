@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Palette, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { PresentationConfig } from '../engine/types'
+import { useModalFocus } from '../app/useModalFocus'
 
 const PRESENTATION_THEMES = [
   { id: 'default', label: 'Default', detail: 'Template teal', colors: ['#3d6869', '#ffffff', '#111111'] },
@@ -16,6 +17,7 @@ interface PresentationSettingsDialogProps {
 }
 
 export function PresentationSettingsDialog({ value, onSave, onClose }: PresentationSettingsDialogProps) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const [draft, setDraft] = useState(value)
   const update = (key: keyof PresentationConfig, nextValue: string) => setDraft((current) => ({ ...current, [key]: nextValue }))
 
@@ -29,7 +31,7 @@ export function PresentationSettingsDialog({ value, onSave, onClose }: Presentat
 
   return createPortal(
     <div className="presentation-settings-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <dialog open className="presentation-settings-dialog" aria-modal="true" aria-labelledby="presentation-settings-title">
+      <dialog open ref={dialogRef} className="presentation-settings-dialog" aria-modal="true" aria-labelledby="presentation-settings-title">
         <header>
           <div><Palette size={18} /><div><small>Presentation</small><h2 id="presentation-settings-title">Design &amp; cover</h2></div></div>
           <button onClick={onClose} aria-label="Close presentation settings"><X size={18} /></button>

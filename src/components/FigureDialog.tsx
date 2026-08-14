@@ -7,6 +7,7 @@ import { chooseLayout } from '../engine/planner'
 import { buildSemanticRegions, parsePresentationDocument } from '../engine/semantics'
 import { defaultPresentationConfig } from '../presentationConfig'
 import type { PresentationBlock, Scene } from '../engine/types'
+import { useModalFocus } from '../app/useModalFocus'
 
 export interface FigureDialogState {
   url: string
@@ -96,6 +97,7 @@ function contextScene(state: FigureDialogState): { scene: Scene; targetId: strin
 }
 
 export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: FigureDialogProps) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const canvasRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
@@ -180,7 +182,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
 
   return createPortal(
     <div className="figure-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
-      <dialog open className="figure-dialog" aria-modal="true" aria-label="Figure editor">
+      <dialog open ref={dialogRef} className="figure-dialog" aria-modal="true" aria-label="Figure editor">
         <header>
           <div><Image size={17} /><strong>Figure</strong><span>true-scale 16:9 scene preview · drag the handle to size the figure</span></div>
           <button onClick={onCancel} aria-label="Close figure editor"><X size={16} /></button>

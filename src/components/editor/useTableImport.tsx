@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Sheet, X } from 'lucide-react'
 import type { EditorView } from 'codemirror'
 import { detectPastedTable, markdownTableFromRows } from './markdownTable'
+import { useModalFocus } from '../../app/useModalFocus'
 
 /**
  * Smart table paste: Word/Excel HTML, CSV, or TSV in — GFM table out.
@@ -50,11 +51,12 @@ export function TableImportDialog({ state, detected, onChange, onClose, onInsert
   onClose: () => void
   onInsert: () => void
 }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   return createPortal(<div className="table-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <dialog open className="table-import-dialog" aria-modal="true" aria-labelledby="table-import-title">
+    <dialog open ref={dialogRef} className="table-import-dialog" aria-modal="true" aria-labelledby="table-import-title">
       <header><div><Sheet size={18} /><div><small>Smart paste</small><h2 id="table-import-title">Import table</h2></div></div><button onClick={onClose} aria-label="Close table import"><X size={18} /></button></header>
       <div className="table-import-body">
-        <label><span>Paste from Word, Excel, CSV, or TSV</span><textarea ref={(node) => node?.focus()} value={state.source} onChange={(event) => onChange((current) => current ? { ...current, source: event.target.value, html: '' } : current)} onPaste={(event) => {
+        <label><span>Paste from Word, Excel, CSV, or TSV</span><textarea data-autofocus value={state.source} onChange={(event) => onChange((current) => current ? { ...current, source: event.target.value, html: '' } : current)} onPaste={(event) => {
           const html = event.clipboardData.getData('text/html')
           const plain = event.clipboardData.getData('text/plain')
           if (!html && !plain) return

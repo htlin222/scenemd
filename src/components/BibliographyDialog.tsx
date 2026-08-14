@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Braces, Check, Copy, Download, ExternalLink, LayoutGrid, LoaderCircle, RefreshCw, SquareLibrary, X } from 'lucide-react'
 import { scanBibliographySources, urlBibtex } from '../citations'
+import { useModalFocus } from '../app/useModalFocus'
 
 function fallbackDoiBibtex(doi: string): string {
   const key = `doi_${doi.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}`
@@ -70,6 +71,7 @@ function bibliographyCard(entry: string): BibliographyCard {
 }
 
 export function BibliographyDialog({ markdown, documentTitle, onClose }: { markdown: string; documentTitle: string; onClose: () => void }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const sources = useMemo(() => scanBibliographySources(markdown), [markdown])
   const [reloadKey, setReloadKey] = useState(0)
   const [doiEntries, setDoiEntries] = useState<string[]>([])
@@ -138,7 +140,7 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
   }
 
   return <div className="bibliography-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <dialog open className="bibliography-dialog" aria-modal="true" aria-labelledby="bibliography-title">
+    <dialog open ref={dialogRef} className="bibliography-dialog" aria-modal="true" aria-labelledby="bibliography-title">
       <header>
         <div><SquareLibrary size={19} /><div><small>Derived from this document</small><h2 id="bibliography-title">Bibliography library</h2></div></div>
         <button onClick={onClose} aria-label="Close bibliography"><X size={18} /></button>
