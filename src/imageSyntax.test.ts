@@ -3,6 +3,7 @@ import {
   formatImageAttributes,
   parseImageAttributes,
   parseMarpitImageAlt,
+  quartoImageCaption,
 } from './imageSyntax'
 
 describe('parseImageAttributes', () => {
@@ -59,6 +60,27 @@ describe('size attribute', () => {
 
   it('leaves size empty for legacy Marpit alt syntax', () => {
     expect(parseMarpitImageAlt('w:480 chart').size).toBe('')
+  })
+})
+
+describe('Quarto-style attributes', () => {
+  it('reads fig-alt as the alt text', () => {
+    const options = parseImageAttributes('圖一：說明', 'width=40% fig-alt="GFR chart"')
+    expect(options.alt).toBe('GFR chart')
+    expect(options.width).toBe('40%')
+  })
+
+  it('clears the alt when a Quarto id marks the bracket as a caption', () => {
+    // Quarto semantics: bracket text is the caption, not alt.
+    const options = parseImageAttributes('圖一：說明', '#fig-gfr width=40%')
+    expect(options.alt).toBe('')
+  })
+
+  it('exposes the bracket text as the Quarto caption', () => {
+    expect(quartoImageCaption('圖一：說明', '#fig-gfr width=40%')).toBe('圖一：說明')
+    expect(quartoImageCaption('圖一：說明', 'fig-alt="chart"')).toBe('圖一：說明')
+    expect(quartoImageCaption('plain alt', 'width=40%')).toBeNull()
+    expect(quartoImageCaption('legacy', null)).toBeNull()
   })
 })
 

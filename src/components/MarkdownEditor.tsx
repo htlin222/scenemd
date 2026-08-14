@@ -53,7 +53,7 @@ import {
   remarkBracketCitations,
   type CitationIdentifier,
 } from '../citations'
-import { formatImageAttributes, imageFilterCss, parseImageAttributes, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
+import { formatImageAttributes, imageFilterCss, parseImageAttributes, parseMarpitImageAlt, quartoImageCaption, type MarpitImageOptions } from '../imageSyntax'
 import { remarkFoldImageAttributes } from '../lib/imageAttributesMdast'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
 import { FigureDialog } from './FigureDialog'
@@ -885,7 +885,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
             setSelectionTool(null)
             setAiError(null)
             const legendContext = readImageLegend(measureView.state.doc.toString(), imageMatch.from, imageMatch.to)
-            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseImageAttributes(imageMatch.alt, imageMatch.attributes), legend: legendContext.legend, legendEditable: legendContext.editable, left: position.left, top: position.imageTop }
+            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseImageAttributes(imageMatch.alt, imageMatch.attributes), legend: legendContext.legend || quartoImageCaption(imageMatch.alt, imageMatch.attributes) || '', legendEditable: legendContext.editable, left: position.left, top: position.imageTop }
             imageToolRef.current = nextImageTool
             setImageTool(nextImageTool)
           } else {

@@ -114,6 +114,19 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(heading?.speakerNotes).toEqual(['這才是真的講者備註'])
   })
 
+  it('reads a Quarto figure: bracket becomes the caption and fig-alt the alt', () => {
+    const blocks = parsePresentationDocument('![圖一：腎絲球過濾率隨年齡下降](fig.png){#fig-gfr width=40% fig-alt="GFR decline chart"}\n')
+    const figure = find(blocks, 'figure')
+    expect(figure?.alt).toBe('GFR decline chart')
+    expect(figure?.imageOptions?.width).toBe('40%')
+    expect(JSON.stringify(figure?.caption ?? [])).toContain('圖一：腎絲球過濾率隨年齡下降')
+  })
+
+  it('strips Quarto fenced-div markers instead of rendering them as paragraphs', () => {
+    const blocks = parsePresentationDocument('::: {layout-ncol=2}\n\n![a](x.png)\n\n:::\n\nAfter the div.\n')
+    expect(blocks.map((block) => block.type)).toEqual(['figure', 'paragraph'])
+  })
+
   it('normalizes an image and its caption into one atomic figure', () => {
     // spec: "Image and caption normalize into one atomic figure."
     const blocks = parsePresentationDocument('![w:520px Bone marrow](marrow.jpg)\n')

@@ -3,7 +3,7 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { InlineNode, PresentationBlock, SemanticRegion, SourceRange } from './types'
-import { parseImageAttributes } from '../imageSyntax'
+import { parseImageAttributes, quartoImageCaption } from '../imageSyntax'
 import { remarkBracketCitations } from '../citations'
 
 interface MdPosition {
@@ -251,7 +251,9 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
       const children = node.children ?? []
       const sibling = children[children.indexOf(image) + 1]
       const attributeMatch = sibling?.type === 'text' ? (sibling.value ?? '').match(/^\{([^}\n]*)\}/) : null
-      block.imageOptions = parseImageAttributes(image.alt ?? '', attributeMatch ? attributeMatch[1] : null)
+      const attributeText = attributeMatch ? attributeMatch[1] : null
+      block.imageOptions = parseImageAttributes(image.alt ?? '', attributeText)
+      const quartoCaption = quartoImageCaption(image.alt ?? '', attributeText)
       block.alt = block.imageOptions.alt || 'Presentation figure'
       const remaining = children
         .filter((child) => child !== image)
@@ -261,7 +263,11 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
           return rest ? { ...sibling, value: rest } : null
         })
         .filter((child): child is NonNullable<typeof child> => child !== null)
-      block.caption = remaining.length ? inlineOf(remaining) : undefined
+      const captionNodes = [
+        ...(quartoCaption ? [{ type: 'text' as const, value: quartoCaption }] : []),
+        ...(remaining.length ? inlineOf(remaining) : []),
+      ]
+      block.caption = captionNodes.length ? captionNodes : undefined
       block.importance = 0.8
       return [block]
     }
@@ -399,6 +405,9 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       finishCodeGroup(index)
       continue
     }
+    // Quarto fenced-div markers (`::: {…}` / `:::`) are structure for another
+    // engine; drop the fences and let their content flow normally.
+    if (node.type === 'paragraph' && nodeText.split('\n').every((line) => /^:{3,}/.test(line.trim()))) continue
     if (node.type === 'html') {
       const comment = (node.value ?? '').replace(/^<!--|-->$/g, '').trim()
       const columnDirective = parseColumnsDirective(comment)

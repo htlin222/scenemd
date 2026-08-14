@@ -137,6 +137,21 @@ Known non-goals for now: mapping `.slide: data-background` onto SceneMD
 background figures, and emitting imsize on save (SceneMD always writes the
 hybrid attribute block).
 
+### Quarto downward compatibility
+
+The hybrid attribute block descends from Quarto's, but the two disagree on
+what the bracket means (Quarto: caption; SceneMD: alt). A `#fig-…` id or
+`fig-alt=` attribute is the deterministic fingerprint of Quarto authorship
+and flips the interpretation:
+
+| Quarto input | SceneMD behavior |
+| --- | --- |
+| `![Caption](url){#fig-x width=40% fig-alt="…"}` | Bracket → legend caption, `fig-alt` → alt, `width`/`height` shared vocabulary. Without `fig-alt`, alt stays empty rather than duplicating the caption. |
+| Fenced divs `::: {layout-ncol=2}` … `:::` | Fence marker paragraphs are dropped; their content flows normally (callouts degrade to plain prose). |
+| YAML frontmatter | Same masking as the HackMD clause. |
+| `@fig-x` cross-references, `{{< shortcodes >}}` | Render literally; accepted limitation. |
+| Dialog save | Migrates to hybrid form; the Quarto caption pre-fills the Legend field so it lands in the same-paragraph legend instead of being lost. |
+
 ### Marp downward compatibility
 
 Marp is the easiest of the three — the image syntax descends from Marpit

@@ -109,15 +109,28 @@ function unquote(value: string): string {
   return value.startsWith('"') && value.endsWith('"') && value.length >= 2 ? value.slice(1, -1) : value
 }
 
+// A `#fig-…` id or `fig-alt=` attribute is the deterministic fingerprint of
+// Quarto authorship, where the bracket text is the caption rather than alt.
+const QUARTO_MARKER = /(^|\s)(?:#fig-[\w-]+|fig-alt=)/
+
+export function quartoImageCaption(alt: string, attributes: string | null): string | null {
+  if (attributes === null || !QUARTO_MARKER.test(attributes)) return null
+  const caption = alt.trim()
+  return caption || null
+}
+
 /**
  * Hybrid syntax: `![alt](url){key=value …}`. With an attribute block present
  * (attributes !== null) the bracket text is verbatim alt and only the block
  * configures the image; without one the legacy Marpit alt tokenizer applies.
  * Unknown keys and invalid values are dropped, never guessed into alt.
+ * Quarto-marked blocks (`#fig-…` / `fig-alt=`) flip the bracket to caption
+ * semantics: alt comes from fig-alt, or stays empty.
  */
 export function parseImageAttributes(alt: string, attributes: string | null): MarpitImageOptions {
   if (attributes === null) return parseMarpitImageAlt(alt)
   const options = defaultOptions(alt)
+  let sawFigAlt = false
   for (const token of attributeTokens(attributes.trim())) {
     const separator = token.indexOf('=')
     if (separator < 0) {
@@ -128,7 +141,11 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
     }
     const key = token.slice(0, separator).toLowerCase()
     const value = unquote(token.slice(separator + 1))
-    if (key === 'width' && LENGTH_PATTERN.test(value)) options.width = value
+    if (key === 'fig-alt') {
+      options.alt = value
+      sawFigAlt = true
+    }
+    else if (key === 'width' && LENGTH_PATTERN.test(value)) options.width = value
     else if (key === 'height' && LENGTH_PATTERN.test(value)) options.height = value
     else if (key === 'layout' && ['legend', 'hero', 'auto'].includes(value)) options.layout = value as ImageLayout
     else if (key === 'fit' && ['contain', 'auto'].includes(value)) options.fit = value as ImageFit
@@ -137,6 +154,7 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
     else if (key === 'size' && /^\d+(?:\.\d+)?%$/.test(value)) options.size = value
     else if (key === 'filter') options.filters = value.trim()
   }
+  if (!sawFigAlt && QUARTO_MARKER.test(attributes)) options.alt = ''
   return options
 }
 
