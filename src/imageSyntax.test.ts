@@ -43,6 +43,25 @@ describe('parseImageAttributes', () => {
   })
 })
 
+describe('size attribute', () => {
+  it('parses size as a percentage of the scene height', () => {
+    expect(parseImageAttributes('alt', 'size=45%').size).toBe('45%')
+  })
+
+  it('rejects a non-percentage size', () => {
+    expect(parseImageAttributes('alt', 'size=300px').size).toBe('')
+  })
+
+  it('formats size and round-trips it', () => {
+    const options = parseImageAttributes('alt', 'size=45%')
+    expect(formatImageAttributes(options)).toBe('{size=45%}')
+  })
+
+  it('leaves size empty for legacy Marpit alt syntax', () => {
+    expect(parseMarpitImageAlt('w:480 chart').size).toBe('')
+  })
+})
+
 describe('formatImageAttributes', () => {
   it('formats only non-default options', () => {
     const options = parseImageAttributes('chart', 'width=40% layout=hero')

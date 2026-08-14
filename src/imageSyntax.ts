@@ -9,6 +9,7 @@ export interface MarpitImageOptions {
   layout: ImageLayout
   side: ImageSide
   splitSize: string
+  size: string
   width: string
   height: string
   filters: string
@@ -26,6 +27,7 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
     layout: 'legend',
     side: 'none',
     splitSize: '50%',
+    size: '',
     width: '',
     height: '',
     filters: '',
@@ -91,6 +93,7 @@ function defaultOptions(alt: string): MarpitImageOptions {
     layout: 'legend',
     side: 'none',
     splitSize: '50%',
+    size: '',
     width: '',
     height: '',
     filters: '',
@@ -131,6 +134,7 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
     else if (key === 'fit' && ['contain', 'auto'].includes(value)) options.fit = value as ImageFit
     else if (key === 'side' && ['left', 'right'].includes(value)) options.side = value as ImageSide
     else if (key === 'split' && /^\d+(?:\.\d+)?%$/.test(value)) options.splitSize = value
+    else if (key === 'size' && /^\d+(?:\.\d+)?%$/.test(value)) options.size = value
     else if (key === 'filter') options.filters = value.trim()
   }
   return options
@@ -138,6 +142,7 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
 
 export function formatImageAttributes(options: MarpitImageOptions): string {
   const tokens: string[] = []
+  if (options.size) tokens.push(`size=${options.size}`)
   if (options.width) tokens.push(`width=${options.width}`)
   if (options.height) tokens.push(`height=${options.height}`)
   if (options.layout !== 'legend') tokens.push(`layout=${options.layout}`)

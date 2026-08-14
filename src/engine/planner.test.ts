@@ -35,6 +35,22 @@ const plannedBlockIds = (scenes: { blocks: PresentationBlock[] }[]) =>
     .filter((id, index, list) => list.indexOf(id) === index)
     .sort()
 
+describe('planScenes — sized figures', () => {
+  it('computes a sized figure from the viewport and keeps the following paragraph on its scene', () => {
+    // design v2: `size=NN%` figures are pure arithmetic — a stale or absurd DOM
+    // measurement must not strand the glued paragraph onto the next scene.
+    const { blocks, regions } = regionsFrom(
+      '## Renal function\n\n![chart](fig.png){size=45%} 圖一：說明\n\nA paragraph below the figure.\n',
+    )
+    const shortViewport = 430
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : block.type === 'heading' ? 76 : 60))
+    const plan = planScenes(regions, measurements, shortViewport, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plannedBlockIds(plan.scenes)).toEqual(allBlockIds(blocks))
+  })
+})
+
 describe('planScenes — fit test', () => {
   it('emits one scene for a region that fits comfortably', () => {
     // spec: "Comfortable regions become scenes directly."
