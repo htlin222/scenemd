@@ -1,3 +1,5 @@
+import { canAccessDocument, requesterEmail } from './_lib/access'
+
 interface Env {
   DB: D1Database
   DOCUMENTS: DurableObjectNamespace
@@ -235,6 +237,12 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     const bytes = await context.request.arrayBuffer()
     if (!bytes.byteLength || bytes.byteLength > 10 * 1024 * 1024) return json({ error: 'Images must be between 1 byte and 10 MB' }, 413)
     const documentId = url.searchParams.get('documentId')?.replace(/[^a-zA-Z0-9-]/g, '') || 'draft'
+    // Uploading into a document's namespace requires access to that document.
+    const uploadRequester = requesterEmail(context.request)
+    if (uploadRequester && documentId !== 'draft') {
+      const row = await context.env.DB.prepare('SELECT owner_email FROM documents WHERE id = ?').bind(documentId).first<{ owner_email: string | null }>()
+      if (row && !canAccessDocument(row.owner_email, uploadRequester)) return json({ error: 'Document not found' }, 404)
+    }
     const key = `documents/${documentId}/${crypto.randomUUID()}.${extension}`
     await context.env.IMAGES.put(key, bytes, {
       httpMetadata: { contentType, cacheControl: 'public, max-age=31536000, immutable' },
@@ -269,9 +277,16 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   if (resource !== 'documents') return json({ error: 'Not found' }, 404)
 
   if (!id && context.request.method === 'GET') {
-    const result = await context.env.DB.prepare(
-      'SELECT id, title, revision, owner_email, share_token_hash, created_at, updated_at FROM documents ORDER BY updated_at DESC',
-    ).all<DocumentListRow>()
+    // Owned documents plus grandfathered (owner-less) ones; other users'
+    // documents are invisible, not merely read-only (#10).
+    const requester = requesterEmail(context.request)
+    const result = requester
+      ? await context.env.DB.prepare(
+          'SELECT id, title, revision, owner_email, share_token_hash, created_at, updated_at FROM documents WHERE owner_email IS NULL OR lower(owner_email) = lower(?) ORDER BY updated_at DESC',
+        ).bind(requester).all<DocumentListRow>()
+      : await context.env.DB.prepare(
+          'SELECT id, title, revision, owner_email, share_token_hash, created_at, updated_at FROM documents ORDER BY updated_at DESC',
+        ).all<DocumentListRow>()
     return json({ documents: result.results.map((document) => ({
       id: document.id,
       title: document.title,
@@ -298,6 +313,19 @@ export const onRequest: PagesFunction<Env> = async (context) => {
   }
 
   if (!id) return json({ error: 'Not found' }, 404)
+
+  // Ownership gate for every per-document route below: state, share minting
+  // and revocation, and HackMD sync. A non-owner gets the same 404 as a
+  // missing document so document ids do not leak existence. The share GET by
+  // token (above) stays public by design — that is what a share link is.
+  {
+    const requester = requesterEmail(context.request)
+    if (requester) {
+      const row = await context.env.DB.prepare('SELECT owner_email FROM documents WHERE id = ?').bind(id).first<{ owner_email: string | null }>()
+      if (!row) return json({ error: 'Document not found' }, 404)
+      if (!canAccessDocument(row.owner_email, requester)) return json({ error: 'Document not found' }, 404)
+    }
+  }
 
   if (action === 'share' && context.request.method === 'POST') {
     const token = randomToken()
