@@ -188,10 +188,10 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
       <figure {...common} data-layout-hint={block.layoutHint} data-background={block.imageOptions?.background || undefined}>
         <div className="figure-frame" style={frameStyle}>
           <img src={block.url} alt={block.alt ?? ''} style={imageStyle} />
-          <span className="figure-index" aria-hidden="true">FIG.</span>
+          <span className="figure-index" aria-hidden="true">{block.figureNumber ? `FIG. ${block.figureNumber}` : 'FIG.'}</span>
         </div>
         {(block.caption?.length || block.alt) && (
-          <figcaption><InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} /></figcaption>
+          <figcaption>{block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}<InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} /></figcaption>
         )}
       </figure>
     )
@@ -357,7 +357,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
             <div className="legend-copy">
               {renderBlocks(prose)}
               {visibleFigures.some((figure) => figure.caption?.length || figure.alt) && <div className="legend-caption">
-                {visibleFigures.map((figure) => (figure.caption?.length || figure.alt) && <p key={`${figure.id}-caption`}><InlineContent nodes={figure.caption?.length ? figure.caption : [{ type: 'text', value: figure.alt ?? '' }]} /></p>)}
+                {visibleFigures.map((figure) => (figure.caption?.length || figure.alt) && <p key={`${figure.id}-caption`}>{figure.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {figure.figureNumber}</strong>}<InlineContent nodes={figure.caption?.length ? figure.caption : [{ type: 'text', value: figure.alt ?? '' }]} /></p>)}
               </div>}
             </div>
           </div>

@@ -26,6 +26,9 @@ test('a paragraph below a sized figure shares its scene in a short viewport', as
   expect(plan.scenes).toHaveLength(1)
   expect(plan.scenes[0].layout).toBe('legend')
   expect(plan.scenes[0].blocks.map((block) => block.type)).toEqual(['heading', 'figure', 'paragraph', 'paragraph'])
+
+  // Stage 2: figures carry an automatic number rendered with the legend.
+  await expect(page.locator('[data-testid="scene-0"] .legend-caption .figure-caption-number')).toHaveText('Fig. 1')
 })
 
 test('the rendered figure honors size as a fraction of the scene height', async ({ page }) => {

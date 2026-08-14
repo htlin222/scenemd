@@ -422,8 +422,11 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
   // Images default to the presentation-friendly legend composition: image on
   // the left and its nearby explanatory copy on the right. Keep that small
   // semantic group together so pagination never strands the legend.
+  let figureCount = 0
   blocks.forEach((block, index) => {
     if (block.type !== 'figure') return
+    figureCount += 1
+    block.figureNumber = figureCount
     block.layoutHint = block.imageOptions?.layout === 'hero' ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
     if (block.layoutHint !== 'legend') return
     const previous = blocks[index - 1]

@@ -336,6 +336,7 @@
 .legend-copy > p { margin: 0; }
 .legend-caption { margin-top: 0.55cqw; padding-top: 0.8cqw; color: var(--template-muted); border-top: 1px solid var(--template-line); }
 .legend-caption p { margin: 0; color: inherit; font-size: 1.25cqw; line-height: 1.35; }
+.figure-caption-number { margin-right: 0.6em; color: var(--template-teal); font-weight: 700; letter-spacing: 0.03em; }
 .media-column { min-width: 0; }
 .scene figure { margin: 0; }
 .figure-frame { position: relative; width: 100%; height: var(--figure-height, auto); max-height: 32cqw; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 0; background: #f1f2f1; }

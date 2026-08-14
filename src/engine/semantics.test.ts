@@ -51,6 +51,15 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(captionText).not.toContain('width=40%')
   })
 
+  it('numbers figures by order of appearance across the document', () => {
+    // design v2: every figure gets "Fig. N" automatically; no cross-references.
+    const blocks = parsePresentationDocument(
+      '# Title\n\n![first](a.png){size=40%}\n\nSome prose.\n\n![second](b.png)\n\n## Later\n\n![third](c.png)\n',
+    )
+    const figures = blocks.filter((block) => block.type === 'figure')
+    expect(figures.map((figure) => figure.figureNumber)).toEqual([1, 2, 3])
+  })
+
   it('normalizes an image and its caption into one atomic figure', () => {
     // spec: "Image and caption normalize into one atomic figure."
     const blocks = parsePresentationDocument('![w:520px Bone marrow](marrow.jpg)\n')
