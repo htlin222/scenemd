@@ -85,18 +85,33 @@ function sceneCitationNumbers(scene: Scene): number[] {
 }
 
 // Publishes the frame area's laid-out height as a pixel CSS variable so sized
-// figure frames get a definite height (see the sized frameStyle in BlockView).
-function FigureFrameArea({ children }: { children: ReactNode }) {
+// figure frames get a definite height (see the sized frameStyle in BlockView),
+// and reports the widest image's rendered width — 文字配合圖片寬: captions set
+// their width from it so text always wraps at the image's displayed width.
+function FigureFrameArea({ children, onImageWidth }: { children: ReactNode; onImageWidth?: (width: number | null) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [areaHeight, setAreaHeight] = useState<number | null>(null)
   useLayoutEffect(() => {
     const element = ref.current
     if (!element) return
-    const observer = new ResizeObserver(() => setAreaHeight(element.clientHeight))
+    const measure = () => {
+      setAreaHeight(element.clientHeight)
+      const images = [...element.querySelectorAll<HTMLElement>('.figure-frame img')]
+      const width = images.length ? Math.max(...images.map((image) => image.getBoundingClientRect().width)) : 0
+      onImageWidth?.(width > 1 ? Math.round(width) : null)
+    }
+    const observer = new ResizeObserver(measure)
     observer.observe(element)
-    setAreaHeight(element.clientHeight)
-    return () => observer.disconnect()
-  }, [])
+    element.querySelectorAll('.figure-frame img').forEach((image) => {
+      observer.observe(image)
+      image.addEventListener('load', measure)
+    })
+    measure()
+    return () => {
+      observer.disconnect()
+      element.querySelectorAll('.figure-frame img').forEach((image) => image.removeEventListener('load', measure))
+    }
+  }, [onImageWidth])
   return (
     <div className="figure-frame-area" ref={ref} style={areaHeight ? { '--frame-area-height': `${areaHeight}px` } as CSSProperties : undefined}>
       {children}
@@ -303,6 +318,8 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
   const firstFigureIndex = scene.blocks.findIndex((block) => block.type === 'figure')
   const aboveProse = prose.filter((block) => scene.blocks.indexOf(block) < firstFigureIndex)
   const belowProse = prose.filter((block) => scene.blocks.indexOf(block) > firstFigureIndex)
+  const [figureImageWidth, setFigureImageWidth] = useState<number | null>(null)
+  useEffect(() => setFigureImageWidth(null), [scene.id])
   const sceneReferences = sceneCitationNumbers(scene)
     .map((number) => ({ number, content: citationReferences?.get(number) }))
     .filter((entry): entry is { number: number; content: InlineNode[] } => Boolean(entry.content))
@@ -370,8 +387,8 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
           // body copy in the right column, paragraphs below it are the legend
           // under the image (design v5).
           <div className={`figure-grid${aboveProse.length ? '' : ' is-figure-only'}`}>
-            <div className="figure-col">
-              <FigureFrameArea>{renderBlocks(visibleFigures)}</FigureFrameArea>
+            <div className="figure-col" style={figureImageWidth ? { '--figure-width': `${figureImageWidth}px` } as CSSProperties : undefined}>
+              <FigureFrameArea onImageWidth={setFigureImageWidth}>{renderBlocks(visibleFigures)}</FigureFrameArea>
               {!!belowProse.length && <div className="figure-below-caption">{renderBlocks(belowProse)}</div>}
             </div>
             {!!aboveProse.length && <div className="figure-text-col" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>{renderBlocks(aboveProse)}</div>}

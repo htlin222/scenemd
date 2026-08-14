@@ -60,6 +60,22 @@ test('without the H2 the figure gets the extra height', async ({ page }) => {
   expect(withoutHeading!.height).toBeGreaterThan(withHeading!.height + 10)
 })
 
+test('a long legend wraps at the image width instead of stretching the column', async ({ page }) => {
+  // 文字配合圖片寬: the caption's width equals the image's displayed width.
+  await page.goto('/tests/harness/pipeline/?width=640&size=45')
+  await page.getByTestId('plan-json').waitFor()
+  const image = page.locator('[data-testid="scene-0"] .figure-frame img')
+  const caption = page.locator('[data-testid="scene-0"] .figure-below-caption')
+  // Wrapping feeds back into the area height for a few ResizeObserver rounds;
+  // poll until the widths agree.
+  await expect.poll(async () => {
+    const imageBox = await image.boundingBox()
+    const captionBox = await caption.boundingBox()
+    if (!imageBox || !captionBox) return Number.POSITIVE_INFINITY
+    return Math.abs(captionBox.width - imageBox.width)
+  }).toBeLessThan(4)
+})
+
 test('the rendered figure honors size as a fraction of the figure column', async ({ page }) => {
   const frame = await page.locator('[data-testid="scene-0"] .figure-frame').boundingBox()
   const column = await page.locator('[data-testid="scene-0"] .figure-col .block-figure').boundingBox()
