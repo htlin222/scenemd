@@ -147,18 +147,10 @@ describe('parsePresentationDocument — manual overrides', () => {
     expect(blocks[1].keepWithNext).toBe(false)
   })
 
-  // KNOWN BUG — `present: hero` is documented in spec.md and README but has no
-  // effect on an image, which is the only block it is meaningful for. The
-  // figure post-pass in parsePresentationDocument unconditionally overwrites
-  // layoutHint from imageOptions.layout, discarding what applyDirectives set.
-  //
-  // The Marpit alt form `![hero Alt](a.png)` does work, so this is a dead
-  // directive rather than a missing capability. Tracked in #23.
-  //
-  // it.fails asserts the current broken behavior: when the bug is fixed this
-  // test starts passing, which vitest reports as an error, prompting whoever
-  // fixed it to promote this to a normal `it`.
-  it.fails('applies present: hero to a figure', () => {
+  it('applies present: hero to a figure', () => {
+    // Regression test for #23: the figure post-pass used to overwrite the
+    // layoutHint set by applyDirectives, making the directive a no-op on the
+    // only block type it is meaningful for.
     const blocks = parsePresentationDocument('<!-- present: hero -->\n\n![One](a.png)\n')
     const figure = blocks.find((block) => block.type === 'figure')
 
