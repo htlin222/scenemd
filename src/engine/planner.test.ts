@@ -367,3 +367,62 @@ describe('withPresentationCover', () => {
     expect(a).not.toBe(c)
   })
 })
+
+describe('relaxOversizedChains via planScenes (#31)', () => {
+  // These exercise the constraint-relaxation pass through the public API:
+  // chains measured taller than capacity must yield to feasible boundaries
+  // without ever cutting a figure from its only prose.
+
+  it('splits an oversized figure chain at shared prose, keeping pairs whole', () => {
+    // heading + lead + figure + shared prose + figure: the whole chain cannot
+    // fit, but [heading lead figure] and [shared figure] both can.
+    const markdown = '## Site\n\nLead prose.\n\n![One](a.png)\n\nShared prose.\n\n![Two](b.png)\n'
+    const { blocks, regions } = regionsFrom(markdown)
+    const heights = measure(blocks, (block) => (block.type === 'figure' ? 280 : block.type === 'heading' ? 76 : 56))
+    const plan = planScenes(regions, heights, 768, 'balanced')
+
+    expect(plan.overflowCount).toBe(0)
+    // The bound pair (first figure + its legend) must land on one scene; the
+    // relaxation may only break links the normalizer left unbound.
+    const figures = blocks.filter((block) => block.type === 'figure')
+    const legend = blocks[blocks.indexOf(figures[0]) + 1]
+    expect(legend.keepWithPrevious).toBe(true)
+    const sceneWithFigure = plan.scenes.find((scene) => scene.blocks.some((block) => block.id === figures[0].id))!
+    expect(sceneWithFigure.blocks.some((block) => block.id === legend.id)).toBe(true)
+    // And no scene ends on a still-bound block.
+    for (const scene of plan.scenes) {
+      const last = scene.blocks.at(-1)!
+      const lastIndexInRegion = regions[0].blocks.findIndex((block) => block.id === last.id)
+      const isRegionEnd = lastIndexInRegion === regions[0].blocks.length - 1
+      if (!isRegionEnd) expect(last.keepWithNext && !last.continuation).toBe(false)
+    }
+  })
+
+  it('rescues a heading glued to a code block that fits alone but not together', () => {
+    const code = Array.from({ length: 24 }, (_, i) => `line ${i}`).join('\n')
+    const markdown = `## Build\n\n\`\`\`bash\n${code}\n\`\`\`\n`
+    const { blocks, regions } = regionsFrom(markdown)
+    const codeBlock = blocks.find((block) => block.type === 'code')!
+    // Code alone fits (620 < 645 capacity at 768); heading + code does not.
+    const heights = measure(blocks, (block) => (block.id === codeBlock.id ? 620 : 76))
+    const plan = planScenes(regions, heights, 768, 'balanced')
+
+    expect(plan.overflowCount).toBe(0)
+    // The heading must not be orphaned: its scene also carries code.
+    const headingScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'heading'))!
+    expect(headingScene.blocks.some((block) => block.type === 'code')).toBe(true)
+    // And the code arrives in continuation parts rather than overflowing.
+    const codeParts = plan.scenes.flatMap((scene) => scene.blocks).filter((block) => block.type === 'code')
+    expect(codeParts.length).toBeGreaterThan(1)
+  })
+
+  it('leaves satisfiable chains exactly alone', () => {
+    const markdown = '## Section\n\nLead prose.\n\n![One](a.png)\n\nLegend prose.\n'
+    const { blocks, regions } = regionsFrom(markdown)
+    const heights = measure(blocks, 60)
+    const plan = planScenes(regions, heights, 1080, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.overflowCount).toBe(0)
+  })
+})
