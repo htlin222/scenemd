@@ -30,11 +30,14 @@ const OVERSIZED = new Set(['oversized-figure.md', 'oversized-math.md'])
 
 // Known invariant gaps in the current planner, recorded as a ratchet.
 //
-// The greedy scan treats keep bindings and orphan headings as score penalties
-// rather than hard constraints, so under tight capacity it still chooses
-// boundaries that violate them. Tracked in #8 (global optimization) — when a
-// combo below starts passing, the ratchet test fails until its entry is
-// removed, so this list can only shrink.
+// Every remaining entry has the same measured root cause: a keep chain
+// (heading + prose + figure + prose + figure, or heading + tall code block)
+// that is itself taller than the scene capacity, so NO boundary choice can
+// satisfy the binding — global optimization (#8) removed the avoidable
+// violations and these are the unavoidable remainder. Fixing them requires
+// capacity-aware splitting of glued groups, tracked in #31. When a combo
+// below starts passing, the ratchet test fails until its entry is removed,
+// so this list can only shrink.
 //
 // Key format: `${fixture}@${viewportHeight}/${density}:${invariant}`
 const KNOWN_GAPS = new Set([
