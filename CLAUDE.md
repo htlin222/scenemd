@@ -57,7 +57,7 @@ markdown
 - Blocks taller than the capacity are pre-split by `continuationParts` per type (paragraph/blockquote inline splitting on word and punctuation boundaries, list items, code lines, table rows repeating the header, columns). Parts get `-part-N` ids and `keepWithPrevious`.
 - The `stability` score rewards break points that matched the previous plan, which is what keeps scenes from reflowing wildly on resize. Preserve `previousPlanRef` threading when touching the planning effect.
 - `chooseLayout()` derives the layout (`chapter`/`text`/`text-media`/`media-dominant`/`legend`/`statement`) from block composition. Authors do not pick layouts.
-- Figures default to `legend` layout and are glued to adjacent paragraphs via `keepWithNext` / `keepWithPrevious` so pagination cannot strand a caption.
+- Figure scenes have exactly one layout (design v5, `docs/plans/2026-08-14-image-config-design.md`): optional heading, then figure left / body text right. Position decides text roles — prose above the figure is body copy (it shrinks via `figureTextScale`, floor 0.6, rather than leaving the page); consecutive paragraphs below the figure are its legend and stay with it. `size=NN%` is a fraction of the figure column (the height under the heading), resolved by CSS percentages so planner and renderer share one formula. The write vocabulary is `{size=NN%}` only; width/height/fit/filter/bg/layout and Marpit alt tokens are read-compat and normalize away on a dialog save (hero maps to `size=100%`). `<!-- present: group -->` … `<!-- present: end-group -->` still hard-binds arbitrary blocks to one scene.
 
 ### Backend split
 
@@ -80,8 +80,8 @@ Vite emits `version.json` with the build timestamp (`deployVersionPlugin`), serv
 - Keep the planner deterministic and independent of Workers AI. AI features (Make bullets, transcript) are editor conveniences; nothing in the pipeline may require them.
 - Block ids are content hashes and `sourceRange` is carried end to end — both drive editor ↔ scene scroll sync and plan stability. Do not regenerate ids from array indices alone.
 - Prefer a semantic break or an under-filled scene over shrinking type or crowding.
-- Presentation hints are HTML comments applied to the next block and are hard constraints: `present: break | keep | hero | hide | only | step`, plus the column group `present: columns [n]` / `present: column` / `present: end-columns`. Other `<!-- -->` comments become speaker notes.
-- Image options live in Marpit-style alt text (`src/imageSyntax.ts`); `parseMarpitImageAlt` / `formatMarpitImageAlt` must round-trip losslessly, since the visual image popover rewrites source through them.
+- Presentation hints are HTML comments applied to the next block and are hard constraints: `present: break | keep | hero | hide | only | step`, plus the column group `present: columns [n]` / `present: column` / `present: end-columns` and the same-scene group `present: group` / `present: end-group`. Other `<!-- -->` comments become speaker notes.
+- Image config uses the hybrid syntax `![alt](url){key=value …}` (`src/imageSyntax.ts`, design in `docs/plans/2026-08-14-image-config-design.md`): bracket text is verbatim alt, the attribute block is the only config source, and text sharing the image's paragraph is the legend. Legacy Marpit alt tokens are still read when no attribute block exists, but every rewrite (figure dialog included) emits hybrid syntax. Clicking image syntax in the editor opens the full-screen figure dialog (`src/components/FigureDialog.tsx`): a 16:9 canvas where `size` (fraction of scene height) is dragged directly; the planner computes sized-figure heights arithmetically instead of measuring them. `parseImageAttributes` / `formatImageAttributes` must round-trip losslessly.
 - Never split image-caption pairs or display math.
 
 ## Git workflow

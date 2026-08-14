@@ -46,7 +46,6 @@ import { buildSemanticRegions, parsePresentationDocument } from './engine/semant
 import { planScenes, withPresentationCover } from './engine/planner'
 import type { Density, PresentationBlock, PresentationConfig, Scene, ScenePlan, SourceRange, ThemeMode } from './engine/types'
 import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
-import { normalizeMarkdownUrls } from './lib/openevidence'
 import { downloadBlob, exportFileName } from './export'
 
 const DEMO_MARKDOWN = `# Acute Myeloid Leukemia
@@ -1189,7 +1188,7 @@ function App() {
         <main className={`workspace ${showPreview ? 'is-preview-open' : ''}${resizingPreview ? ' is-resizing-preview' : ''}`} id="top" style={showPreview ? { '--preview-width': `${previewWidth}px` } as React.CSSProperties : undefined}>
           <section className="editor-panel" aria-label="Markdown editor">
             <div className="editor-wrap">
-              <MarkdownEditor value={markdown} onChange={(value) => { const normalized = normalizeMarkdownUrls(value); setMarkdown(normalized); setDocumentTitle(titleFromMarkdown(normalized, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} onCursorLineChange={setEditorCursorLine} scrollRequest={editorScrollRequest} />
+              <MarkdownEditor value={markdown} onChange={(value) => { setMarkdown(value); setDocumentTitle(titleFromMarkdown(value, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} onCursorLineChange={setEditorCursorLine} scrollRequest={editorScrollRequest} />
             </div>
           </section>
 

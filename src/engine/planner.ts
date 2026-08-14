@@ -28,7 +28,12 @@ function hash(value: string): string {
   return (h >>> 0).toString(36)
 }
 
-function blockHeight(block: PresentationBlock, measurements: Map<string, number>): number {
+function blockHeight(block: PresentationBlock, measurements: Map<string, number>, sceneBudget: number): number {
+  // Sized figures are computed contextually inside usedHeight's figure branch
+  // (their basis is the space remaining under the heading, design v5). Here a
+  // sized figure only needs a sane fallback for the pre-split pass.
+  const sized = block.type === 'figure' ? block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/) : null
+  if (sized) return (sceneBudget * Number(sized[1])) / 100
   const measured = measurements.get(block.id)
   if (measured) return measured
   if (block.estimatedHeight) return block.estimatedHeight
@@ -148,31 +153,78 @@ function continuationParts(block: PresentationBlock, measuredHeight: number, cap
   }))
 }
 
-function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>): number {
-  if (chooseLayout(blocks) === 'legend') {
-    const headings = blocks.filter((block) => block.type === 'heading')
-    const figures = blocks.filter((block) => block.type === 'figure')
-    const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
-    const headingHeight = headings.reduce((total, block) => total + blockHeight(block, measurements), 0)
-      + Math.max(0, headings.length - 1) * 20
-    const figureHeight = figures.reduce((total, block) => total + blockHeight(block, measurements), 0)
-      + Math.max(0, figures.length - 1) * 12
-    const proseHeight = prose.reduce((total, block) => total + blockHeight(block, measurements), 0)
-      + Math.max(0, prose.length - 1) * 12
-    return headingHeight + (headings.length ? 20 : 0) + Math.max(figureHeight, proseHeight)
+const FIGURE_CAPTION_ALLOWANCE = 40
+// The frame yields at most this much of its declared size to its captions;
+// the renderer mirrors it with a matching min-height.
+const MIN_FRAME_SHRINK = 0.75
+// Above-figure prose may shrink to fit the scene ("縮小文字，總之塞就對了"),
+// down to this floor — below it the scene overflows visibly instead.
+const MIN_TEXT_SCALE = 0.6
+
+interface FigureColumns {
+  headingTotal: number
+  available: number
+  frames: number
+  nonFrame: number
+  aboveHeight: number
+}
+
+function figureColumns(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): FigureColumns {
+  const headings = blocks.filter((block) => block.type === 'heading')
+  const figures = blocks.filter((block) => block.type === 'figure')
+  const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
+  const headingTotal = headings.length
+    ? headings.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+      + Math.max(0, headings.length - 1) * 20 + 20
+    : 0
+  // size=NN% means a fraction of the height REMAINING under the heading.
+  // Position decides text roles: prose above the figure fills the right
+  // column, prose below it joins the legend under the image (design v5).
+  const available = Math.max(120, sceneBudget - headingTotal)
+  const firstFigureIndex = blocks.findIndex((block) => block.type === 'figure')
+  const aboveProse = prose.filter((block) => blocks.indexOf(block) < firstFigureIndex)
+  const belowProse = prose.filter((block) => blocks.indexOf(block) > firstFigureIndex)
+  const belowHeight = belowProse.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+    + Math.max(0, belowProse.length - 1) * 12
+  // The legend space is mandated by the layout; `size` distributes only what
+  // remains after it, so size=100% always fits exactly and never overflows.
+  const frameArea = Math.max(80, available - belowHeight)
+  const frames = figures.reduce((total, block) => {
+    const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
+    return total + (sized ? (frameArea * Number(sized[1])) / 100 : blockHeight(block, measurements, sceneBudget))
+  }, 0)
+  const nonFrame = figures.length * FIGURE_CAPTION_ALLOWANCE + Math.max(0, figures.length - 1) * 12 + belowHeight
+  const aboveHeight = aboveProse.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+    + Math.max(0, aboveProse.length - 1) * 12
+  return { headingTotal, available, frames, nonFrame, aboveHeight }
+}
+
+export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number | undefined {
+  if (chooseLayout(blocks) !== 'figure') return undefined
+  const { available, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
+  if (aboveHeight <= available) return undefined
+  return Math.max(MIN_TEXT_SCALE, Math.round((available / aboveHeight) * 100) / 100)
+}
+
+function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number {
+  if (chooseLayout(blocks) === 'figure') {
+    const { headingTotal, available, frames, nonFrame, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
+    const columnNeeded = frames + nonFrame
+    const columnMinimum = frames * MIN_FRAME_SHRINK + nonFrame
+    const figureColumn = Math.min(columnNeeded, Math.max(available, columnMinimum))
+    const effectiveAbove = Math.min(aboveHeight, Math.max(available, aboveHeight * MIN_TEXT_SCALE))
+    return headingTotal + Math.max(figureColumn, effectiveAbove)
   }
-  return blocks.reduce((total, block) => total + blockHeight(block, measurements), 0) + Math.max(0, blocks.length - 1) * 20
+  return blocks.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0) + Math.max(0, blocks.length - 1) * 20
 }
 
 export function chooseLayout(blocks: PresentationBlock[]): SceneLayout {
   if (blocks.some((block) => block.layoutHint === 'statement') || (blocks.length === 1 && blocks[0].type === 'blockquote')) {
     return 'statement'
   }
-  if (blocks.some((block) => block.type === 'figure' && block.layoutHint === 'legend')) return 'legend'
-  const figures = blocks.filter((block) => block.type === 'figure' && !block.imageOptions?.background)
-  const text = blocks.filter((block) => block.type !== 'figure' && block.type !== 'heading')
-  if (figures.some((block) => block.layoutHint === 'hero') || (figures.length && text.length <= 1)) return 'media-dominant'
-  if (figures.length) return 'text-media'
+  // design v5: every figure scene has exactly one structure — an optional
+  // heading, then figure left / text right. Composition never changes it.
+  if (blocks.some((block) => block.type === 'figure')) return 'figure'
   if (blocks[0]?.type === 'heading' && blocks[0].depth === 1) return 'chapter'
   return 'text'
 }
@@ -235,6 +287,7 @@ function makeScene(
   capacity: number,
   score: number,
   scores: ScoreBreakdown,
+  textScale?: number,
 ): Scene {
   const first = blocks[0]
   const last = blocks[blocks.length - 1]
@@ -264,6 +317,7 @@ function makeScene(
     score,
     scores,
     warning,
+    figureTextScale: textScale,
     continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
   }
@@ -312,12 +366,18 @@ export function planScenes(
   const previousEnds = new Set(previousPlan?.scenes.map((scene) => scene.endBlockId) ?? [])
 
   for (const region of regions) {
-    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements), capacity, measurements))
+    const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements))
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
-    const regionUsed = usedHeight(plannedBlocks, measurements)
-    if (regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
+    const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
+    // A figure region IS the page the author delimited with `---` or a
+    // heading: it becomes exactly one scene whenever it fits (above-text
+    // shrinks to help). A region that still cannot fit falls through to the
+    // partitioner so excess text flows out — 文讓步 — instead of producing a
+    // giant overflowing scene on arbitrary documents.
+    if ((plannedBlocks.some((block) => block.type === 'figure') && regionUsed <= capacity)
+      || regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
       const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
-      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown))
+      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity)))
       continue
     }
 
@@ -338,22 +398,34 @@ export function planScenes(
     // pays a fixed cost: a split must earn more than SCENE_COST in combined
     // score to beat staying together, which is the sum-form of "prefer
     // coherent under-filled scenes over crowded ones, but do not shatter".
+    //
+    // A boundary must never fall inside a `present: group`: those ends are
+    // simply not legal partition points.
     const total = plannedBlocks.length
+    const insideGroup = (end: number): boolean =>
+      end > 0
+      && end < total
+      && Boolean(plannedBlocks[end - 1].groupId)
+      && plannedBlocks[end].groupId === plannedBlocks[end - 1].groupId
     type Candidate = ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }
     const bestScore = Array.from({ length: total + 1 }, () => 0)
     const bestChoice = Array.from({ length: total + 1 }, (): Candidate | null => null)
     for (let start = total - 1; start >= 0; start -= 1) {
+      if (insideGroup(start)) continue
       let bestTotal = Number.NEGATIVE_INFINITY
       let chosen: Candidate | null = null
       for (let end = start + 1; end <= total; end += 1) {
+        if (insideGroup(end)) continue
         const candidateBlocks = plannedBlocks.slice(start, end)
-        const used = usedHeight(candidateBlocks, measurements)
+        const used = usedHeight(candidateBlocks, measurements, capacity)
         const evaluated = evaluate(candidateBlocks, end, total, used, capacity, density, previousEnds, plannedBlocks[end])
-        if (evaluated.invalid) break
+        if (evaluated.invalid && chosen) break
         const candidateTotal = evaluated.total + bestScore[end] - (end < total ? SCENE_COST : 0)
-        if (candidateTotal > bestTotal) {
-          bestTotal = candidateTotal
-          chosen = { ...evaluated, blocks: candidateBlocks, end, used }
+        if (!evaluated.invalid || !chosen) {
+          if (candidateTotal > bestTotal || !chosen) {
+            bestTotal = candidateTotal
+            chosen = { ...evaluated, blocks: candidateBlocks, end, used }
+          }
         }
         if (used > capacity) break
       }
@@ -363,7 +435,7 @@ export function planScenes(
     for (let start = 0; start < total; ) {
       const choice = bestChoice[start]
       if (!choice) break
-      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown))
+      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown, figureTextScale(choice.blocks, measurements, capacity)))
       start = choice.end
     }
   }

@@ -7,7 +7,7 @@ exports[`corpus metrics > tracks the aggregate quality profile across the matrix
     "scenes": 4,
   },
   "image-heavy.md": {
-    "averageFill": 0.43,
+    "averageFill": 0.59,
     "scenes": 5,
   },
   "list-heavy.md": {

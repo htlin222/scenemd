@@ -3,7 +3,7 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import type { InlineNode, PresentationBlock, SemanticRegion, SourceRange } from './types'
-import { parseMarpitImageAlt } from '../imageSyntax'
+import { parseImageAttributes, quartoImageCaption } from '../imageSyntax'
 import { remarkBracketCitations } from '../citations'
 
 interface MdPosition {
@@ -133,6 +133,13 @@ function parseDirective(value: string): Directives | null {
   return { [match[1].toLowerCase()]: true }
 }
 
+function parseGroupDirective(value: string): 'start' | 'end' | null {
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'present: group') return 'start'
+  if (normalized === 'present: end-group') return 'end'
+  return null
+}
+
 function parseColumnsDirective(value: string): 'start' | 'next' | 'end' | null {
   const normalized = value.trim().toLowerCase()
   if (/^present:\s*columns(?:\s+\d+)?$/.test(normalized)) return 'start'
@@ -142,7 +149,9 @@ function parseColumnsDirective(value: string): 'start' | 'next' | 'end' | null {
 }
 
 function isMarpDirective(value: string): boolean {
-  return /^\s*(?:theme|paginate|header|footer|style|class|color|backgroundcolor|backgroundimage|backgroundposition|backgroundrepeat|backgroundsize)\s*:/i.test(value)
+  // Marp global and local directives, with the optional `_` spot-directive
+  // prefix. Anything matching is engine config for Marp, never a speaker note.
+  return /^\s*_?(?:marp|theme|paginate|header|footer|style|class|color|size|math|transition|headingdivider|title|author|description|keywords|url|image|backgroundcolor|backgroundimage|backgroundposition|backgroundrepeat|backgroundsize)\s*:/i.test(value)
 }
 
 function columnsBlock(columns: PresentationBlock[][], index: number): PresentationBlock | null {
@@ -237,10 +246,46 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
       const block = baseBlock(node, index, 'figure')
       block.semanticRole = 'figure'
       block.url = image.url ?? ''
-      block.imageOptions = parseMarpitImageAlt(image.alt ?? '')
+      // A `{key=value}` block directly after the image is hybrid-syntax config,
+      // never caption text (docs/plans/2026-08-14-image-config-design.md).
+      const children = node.children ?? []
+      const sibling = children[children.indexOf(image) + 1]
+      const attributeMatch = sibling?.type === 'text' ? (sibling.value ?? '').match(/^\{([^}\n]*)\}/) : null
+      const attributeText = attributeMatch ? attributeMatch[1] : null
+      block.imageOptions = parseImageAttributes(image.alt ?? '', attributeText)
+      const quartoCaption = quartoImageCaption(image.alt ?? '', attributeText)
       block.alt = block.imageOptions.alt || 'Presentation figure'
-      const remaining = (node.children ?? []).filter((child) => child !== image)
-      block.caption = remaining.length ? inlineOf(remaining) : undefined
+      const remaining = children
+        .filter((child) => child !== image)
+        .map((child) => {
+          if (child !== sibling || !attributeMatch) return child
+          const rest = (sibling.value ?? '').slice(attributeMatch[0].length).replace(/^\s+/, '')
+          return rest ? { ...sibling, value: rest } : null
+        })
+        .filter((child): child is NonNullable<typeof child> => child !== null)
+      const captionNodes = [
+        ...(quartoCaption ? [{ type: 'text' as const, value: quartoCaption }] : []),
+        ...(remaining.length ? inlineOf(remaining) : []),
+      ]
+      block.caption = captionNodes.length ? captionNodes : undefined
+      block.importance = 0.8
+      return [block]
+    }
+    // HackMD imsize (`![alt](url =WxH)`) fails CommonMark image parsing and
+    // arrives as literal text; recover it as a figure with pixel dimensions.
+    const imsize = images.length === 0
+      ? textOf(node).match(/^!\[([^\]]*)\]\((\S+)\s+=(\d+(?:\.\d+)?)x(\d+(?:\.\d+)?)?\)\s*([\s\S]*)$/)
+      : null
+    if (imsize) {
+      const block = baseBlock(node, index, 'figure')
+      block.semanticRole = 'figure'
+      block.url = imsize[2]
+      block.imageOptions = parseImageAttributes(imsize[1], null)
+      block.imageOptions.width = `${imsize[3]}px`
+      if (imsize[4]) block.imageOptions.height = `${imsize[4]}px`
+      block.alt = block.imageOptions.alt || 'Presentation figure'
+      const trailing = imsize[5].trim()
+      block.caption = trailing ? [{ type: 'text', value: trailing }] : undefined
       block.importance = 0.8
       return [block]
     }
@@ -312,12 +357,24 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
 }
 
 export function parsePresentationDocument(markdown: string): PresentationBlock[] {
-  const tree = processor.runSync(processor.parse(markdown)) as MdNode
+  // HackMD reveal.js compatibility: a leading YAML frontmatter block must not
+  // become content. It is masked with blank lines (not stripped) so every
+  // sourceRange below keeps its real line number for editor↔scene sync.
+  const frontmatter = markdown.match(/^---\n([\s\S]*?)\n---(?:\n|$)/)
+  let source = markdown
+  let isSlideDocument = false
+  if (frontmatter) {
+    isSlideDocument = /^type:\s*slide\s*$/m.test(frontmatter[1])
+    source = frontmatter[0].replace(/[^\n]+/g, '') + markdown.slice(frontmatter[0].length)
+  }
+  const tree = processor.runSync(processor.parse(source)) as MdNode
   const blocks: PresentationBlock[] = []
   let directives: Directives = {}
   let referencesDepth: number | null = null
   let activeColumns: PresentationBlock[][] | null = null
   let activeCodeGroup: PresentationBlock[] | null = null
+  let activeGroup: string | null = null
+  let groupCount = 0
   let pendingSpeakerNotes: Array<{ text: string; range: SourceRange }> = []
 
   const lastAuthoredBlock = () => activeColumns?.at(-1)?.at(-1) ?? blocks.at(-1)
@@ -348,6 +405,9 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       finishCodeGroup(index)
       continue
     }
+    // Quarto fenced-div markers (`::: {…}` / `:::`) are structure for another
+    // engine; drop the fences and let their content flow normally.
+    if (node.type === 'paragraph' && nodeText.split('\n').every((line) => /^:{3,}/.test(line.trim()))) continue
     if (node.type === 'html') {
       const comment = (node.value ?? '').replace(/^<!--|-->$/g, '').trim()
       const columnDirective = parseColumnsDirective(comment)
@@ -365,6 +425,19 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
         finishColumns(index)
         continue
       }
+      const groupDirective = parseGroupDirective(comment)
+      if (groupDirective === 'start') {
+        groupCount += 1
+        activeGroup = `group-${groupCount}`
+        continue
+      }
+      if (groupDirective === 'end') {
+        activeGroup = null
+        continue
+      }
+      // reveal.js per-slide/per-element directives from HackMD decks are
+      // presentation hints for another engine, never speaker notes.
+      if (/^\.(?:slide|element):/.test(comment)) continue
       const directive = parseDirective(comment)
       if (directive) directives = { ...directives, ...directive }
       else if (comment && !isMarpDirective(comment)) {
@@ -385,6 +458,20 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       if ((node.depth ?? 4) <= (referencesDepth ?? 0) && label !== 'references') referencesDepth = null
       if (label === 'references' && node.depth === 3) referencesDepth = 3
     }
+    // reveal.js speaker notes: only documents declaring `type: slide` treat a
+    // `Note:` paragraph as notes — ordinary prose legitimately starts with it.
+    if (isSlideDocument && node.type === 'paragraph') {
+      const noteMatch = textOf(node).match(/^Note:\s*([\s\S]*)$/i)
+      if (noteMatch) {
+        const target = lastAuthoredBlock()
+        const note = noteMatch[1].trim()
+        if (target) {
+          target.speakerNotes = [...(target.speakerNotes ?? []), note]
+          target.speakerNoteRanges = [...(target.speakerNoteRanges ?? []), rangeOf(node)]
+        } else pendingSpeakerNotes.push({ text: note, range: rangeOf(node) })
+        continue
+      }
+    }
     const normalized = makeBlocks(node, index)
     if (activeColumns && node.type === 'heading' && node.depth === 3 && activeColumns[activeColumns.length - 1].length) activeColumns.push([])
     normalized.forEach((block, blockIndex) => {
@@ -396,6 +483,7 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       }
       if (referencesDepth !== null && block.type === 'list') block.semanticRole = 'reference'
       if (block.visibility !== 'hidden') {
+        if (activeGroup) block.groupId = activeGroup
         if (activeCodeGroup && block.type === 'code') activeCodeGroup.push(block)
         else if (activeColumns) activeColumns[activeColumns.length - 1].push(block)
         else blocks.push(block)
@@ -407,31 +495,29 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
   finishColumns((tree.children ?? []).length)
   finishCodeGroup((tree.children ?? []).length)
 
-  // Images default to the presentation-friendly legend composition: image on
-  // the left and its nearby explanatory copy on the right. Keep that small
-  // semantic group together so pagination never strands the legend.
-  blocks.forEach((block, index) => {
+  // Images default to the presentation-friendly legend composition. Text that
+  // must share the figure's scene is designated explicitly with
+  // `present: group` markers — there is no implicit neighbor gluing.
+  let figureCount = 0
+  blocks.forEach((block) => {
     if (block.type !== 'figure') return
-    // A `present: hero` directive has already set layoutHint by this point.
-    // The Marpit alt form defaults to 'legend', so an alt that still says
-    // 'legend' cannot be distinguished from "no preference" — the directive
-    // therefore wins over the alt default, and an explicit alt 'hero'/'auto'
-    // agrees with or refines it.
-    const directiveHero = block.layoutHint === 'hero'
-    block.layoutHint = block.imageOptions?.layout === 'hero' || directiveHero ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
-    if (block.layoutHint !== 'legend') return
-    const previous = blocks[index - 1]
-    if (previous?.type === 'paragraph') {
-      previous.keepWithNext = true
-      block.keepWithPrevious = true
+    figureCount += 1
+    block.figureNumber = figureCount
+    // Legacy hero (Marpit token, layout=hero, or present: hero — #28's
+    // directive fix is subsumed here) degrades to a full-height figure in the
+    // single v5 layout.
+    if ((block.imageOptions?.layout === 'hero' || block.layoutHint === 'hero') && block.imageOptions && !block.imageOptions.size) {
+      block.imageOptions.size = '100%'
     }
-    let previousInGroup: PresentationBlock = block
-    for (let nextIndex = index + 1; nextIndex < Math.min(blocks.length, index + 4); nextIndex += 1) {
+    // Position decides text roles: every consecutive paragraph BELOW a figure
+    // is its legend and stays with it. Text above the figure remains free.
+    let previous: PresentationBlock = block
+    for (let nextIndex = blocks.indexOf(block) + 1; nextIndex < blocks.length; nextIndex += 1) {
       const next = blocks[nextIndex]
       if (next.type !== 'paragraph') break
-      previousInGroup.keepWithNext = true
+      previous.keepWithNext = true
       next.keepWithPrevious = true
-      previousInGroup = next
+      previous = next
     }
   })
 

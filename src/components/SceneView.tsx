@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import katex from 'katex'
 import type { InlineNode, PresentationBlock, PresentationConfig, Scene } from '../engine/types'
 import { imageFilterCss } from '../imageSyntax'
@@ -82,6 +82,41 @@ function sceneCitationNumbers(scene: Scene): number[] {
     block.listItems?.forEach((item) => collectCitationNumbers(item, numbers))
   })
   return [...numbers].sort((left, right) => left - right)
+}
+
+// Publishes the frame area's laid-out height as a pixel CSS variable so sized
+// figure frames get a definite height (see the sized frameStyle in BlockView),
+// and reports the widest image's rendered width — 文字配合圖片寬: captions set
+// their width from it so text always wraps at the image's displayed width.
+function FigureFrameArea({ children, onImageWidth }: { children: ReactNode; onImageWidth?: (width: number | null) => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [areaHeight, setAreaHeight] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const measure = () => {
+      setAreaHeight(element.clientHeight)
+      const images = [...element.querySelectorAll<HTMLElement>('.figure-frame img')]
+      const width = images.length ? Math.max(...images.map((image) => image.getBoundingClientRect().width)) : 0
+      onImageWidth?.(width > 1 ? Math.round(width) : null)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    element.querySelectorAll('.figure-frame img').forEach((image) => {
+      observer.observe(image)
+      image.addEventListener('load', measure)
+    })
+    measure()
+    return () => {
+      observer.disconnect()
+      element.querySelectorAll('.figure-frame img').forEach((image) => image.removeEventListener('load', measure))
+    }
+  }, [onImageWidth])
+  return (
+    <div className="figure-frame-area" ref={ref} style={areaHeight ? { '--frame-area-height': `${areaHeight}px` } as CSSProperties : undefined}>
+      {children}
+    </div>
+  )
 }
 
 function TableCellContent({ value }: { value: string }) {
@@ -176,17 +211,25 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
       filter: imageFilterCss(block.imageOptions?.filters ?? ''),
       objectFit: block.imageOptions?.fit === 'auto' ? 'scale-down' : 'contain',
     }
-    const frameStyle = block.imageOptions?.height
-      ? { '--figure-height': block.imageOptions.height } as CSSProperties
-      : undefined
+    // `size=NN%` resolves against the frame area (the space left after the
+    // heading and the legend). The area publishes its measured height as a
+    // pixel variable, so the frame height is a definite length — which lets
+    // the image's auto width resolve and the fit-content column truly follow
+    // the figure instead of leaving dead padding when it shrinks.
+    const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
+    const frameStyle = sized
+      ? { '--figure-height': `calc(var(--frame-area-height, 320px) * ${Number(sized[1]) / 100})` } as CSSProperties
+      : block.imageOptions?.height
+        ? { '--figure-height': block.imageOptions.height } as CSSProperties
+        : undefined
     return (
       <figure {...common} data-layout-hint={block.layoutHint} data-background={block.imageOptions?.background || undefined}>
         <div className="figure-frame" style={frameStyle}>
           <img src={block.url} alt={block.alt ?? ''} style={imageStyle} />
-          <span className="figure-index" aria-hidden="true">FIG.</span>
+          <span className="figure-index" aria-hidden="true">{block.figureNumber ? `FIG. ${block.figureNumber}` : 'FIG.'}</span>
         </div>
         {(block.caption?.length || block.alt) && (
-          <figcaption><InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} /></figcaption>
+          <figcaption>{block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}<InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} /></figcaption>
         )}
       </figure>
     )
@@ -270,22 +313,16 @@ interface SceneViewProps {
 export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revealIndex, measurement = false, navigationLabels = [], activeNavigationLabel, onNavigateLabel, presentationConfig, citationReferences }: SceneViewProps) {
   const heading = scene.blocks.find((block) => block.type === 'heading')
   const content = scene.blocks.filter((block) => block !== heading)
-  const figures = content.filter((block) => block.type === 'figure')
-  const backgroundFigure = figures.find((block) => block.imageOptions?.background && block.layoutHint !== 'legend')
-  const visibleFigures = figures.filter((block) => block !== backgroundFigure)
+  const visibleFigures = content.filter((block) => block.type === 'figure')
   const prose = content.filter((block) => block.type !== 'figure')
+  const firstFigureIndex = scene.blocks.findIndex((block) => block.type === 'figure')
+  const aboveProse = prose.filter((block) => scene.blocks.indexOf(block) < firstFigureIndex)
+  const belowProse = prose.filter((block) => scene.blocks.indexOf(block) > firstFigureIndex)
+  const [figureImageWidth, setFigureImageWidth] = useState<number | null>(null)
+  useEffect(() => setFigureImageWidth(null), [scene.id])
   const sceneReferences = sceneCitationNumbers(scene)
     .map((number) => ({ number, content: citationReferences?.get(number) }))
     .filter((entry): entry is { number: number; content: InlineNode[] } => Boolean(entry.content))
-  const backgroundStyle = backgroundFigure ? {
-    backgroundImage: `url(${JSON.stringify(backgroundFigure.url ?? '').slice(1, -1)})`,
-    // Background figures follow the same no-crop rule as inline figures.
-    backgroundSize: 'contain',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
-    filter: imageFilterCss(backgroundFigure.imageOptions?.filters ?? ''),
-    '--scene-bg-split': backgroundFigure.imageOptions?.splitSize || '50%',
-  } as CSSProperties : undefined
 
   const renderBlocks = (blocks: PresentationBlock[]) => blocks.map((block) => (
     <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} />
@@ -332,8 +369,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
   }
 
   return (
-    <article className={`scene scene-${scene.layout}${backgroundFigure ? ` has-background background-${backgroundFigure.imageOptions?.side ?? 'none'}` : ''}${sceneReferences.length ? ' has-citations' : ''}`} data-layout={scene.layout} data-scene-id={scene.id} data-presentation-theme={presentationConfig.theme}>
-      {backgroundFigure && <div className="scene-background-image" style={backgroundStyle} role="img" aria-label={backgroundFigure.alt ?? ''} />}
+    <article className={`scene scene-${scene.layout}${sceneReferences.length ? ' has-citations' : ''}`} data-layout={scene.layout} data-scene-id={scene.id} data-presentation-theme={presentationConfig.theme}>
       {navigationLabels.length > 0 && (
         <nav className="scene-section-nav" aria-label="Document sections">
           {navigationLabels.slice(0, 7).map((label) => (
@@ -346,25 +382,16 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
         {scene.continuationLabel && <div className="continuation-label">{scene.continuationLabel}</div>}
         {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
-        {scene.layout === 'legend' ? (
-          <div className="legend-grid">
-            <div className="legend-media">{renderBlocks(visibleFigures)}</div>
-            <div className="legend-copy">
-              {renderBlocks(prose)}
-              {visibleFigures.some((figure) => figure.caption?.length || figure.alt) && <div className="legend-caption">
-                {visibleFigures.map((figure) => (figure.caption?.length || figure.alt) && <p key={`${figure.id}-caption`}><InlineContent nodes={figure.caption?.length ? figure.caption : [{ type: 'text', value: figure.alt ?? '' }]} /></p>)}
-              </div>}
+        {scene.layout === 'figure' ? (
+          // Position decides the text's role: paragraphs above the figure are
+          // body copy in the right column, paragraphs below it are the legend
+          // under the image (design v5).
+          <div className={`figure-grid${aboveProse.length ? '' : ' is-figure-only'}`}>
+            <div className="figure-col" style={figureImageWidth ? { '--figure-width': `${figureImageWidth}px` } as CSSProperties : undefined}>
+              <FigureFrameArea onImageWidth={setFigureImageWidth}>{renderBlocks(visibleFigures)}</FigureFrameArea>
+              {!!belowProse.length && <div className="figure-below-caption">{renderBlocks(belowProse)}</div>}
             </div>
-          </div>
-        ) : scene.layout === 'text-media' ? (
-          <div className="text-media-grid">
-            <div className="prose-column">{renderBlocks(prose)}</div>
-            <div className="media-column">{renderBlocks(visibleFigures)}</div>
-          </div>
-        ) : scene.layout === 'media-dominant' ? (
-          <div className="media-dominant-grid">
-            <div className="media-column">{renderBlocks(visibleFigures)}</div>
-            {!!prose.length && <div className="prose-column">{renderBlocks(prose)}</div>}
+            {!!aboveProse.length && <div className="figure-text-col" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>{renderBlocks(aboveProse)}</div>}
           </div>
         ) : (
           <div className="prose-flow">{renderBlocks(content)}</div>

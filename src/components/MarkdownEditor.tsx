@@ -53,9 +53,13 @@ import {
   remarkBracketCitations,
   type CitationIdentifier,
 } from '../citations'
-import { formatMarpitImageAlt, imageFilterCss, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
+import { formatImageAttributes, imageFilterCss, parseImageAttributes, parseMarpitImageAlt, quartoImageCaption, type MarpitImageOptions } from '../imageSyntax'
+import { remarkFoldImageAttributes } from '../lib/imageAttributesMdast'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
+import { FigureDialog } from './FigureDialog'
 import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
+import { minimalDocChange } from '../lib/minimalChange'
+import { imageParagraphReplacement, readImageLegend } from '../lib/legendText'
 
 export type EditorMode = 'write' | 'split' | 'preview'
 
@@ -63,6 +67,8 @@ class MarkdownImagePreviewWidget extends WidgetType {
   constructor(readonly url: string, readonly alt: string) { super() }
   eq(other: MarkdownImagePreviewWidget) { return other.url === this.url && other.alt === this.alt }
   toDOM() {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'cm-image-preview-block'
     const figure = document.createElement('figure')
     figure.className = 'cm-image-preview'
     const image = document.createElement('img')
@@ -75,7 +81,8 @@ class MarkdownImagePreviewWidget extends WidgetType {
       caption.textContent = this.alt
       figure.appendChild(caption)
     }
-    return figure
+    wrapper.appendChild(figure)
+    return wrapper
   }
   ignoreEvent() { return false }
 }
@@ -143,7 +150,7 @@ export function MarkdownDocumentView({ value, className = '' }: { value: string;
   return (
     <article className={`markdown-document ${className}`}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkBracketCitations]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkBracketCitations, remarkFoldImageAttributes]}
         rehypePlugins={[rehypeKatex]}
         skipHtml
         components={{
@@ -210,6 +217,9 @@ interface ImageToolState {
   url: string
   originalUrl: string
   options: MarpitImageOptions
+  legend: string
+  legendEditable: boolean
+  documentSource: string
   left: number
   top: number
 }
@@ -270,6 +280,8 @@ const PRESENTATION_HINTS = [
   { label: '<!-- present: hide -->', detail: 'Hide the next block in presentation' },
   { label: '<!-- present: only -->', detail: 'Show the next block only in presentation' },
   { label: '<!-- present: step -->', detail: 'Reveal the next list item by item' },
+  { label: '<!-- present: group -->', detail: 'Start a group that stays on one scene' },
+  { label: '<!-- present: end-group -->', detail: 'End the same-scene group' },
   { label: '<!-- present: columns -->', detail: 'Start responsive semantic columns' },
   { label: '<!-- present: column -->', detail: 'Start another column' },
   { label: '<!-- present: end-columns -->', detail: 'End semantic columns' },
@@ -760,17 +772,13 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     setSelectionTool(null)
   }
 
-  const updateImageDraft = (patch: Partial<MarpitImageOptions> & { url?: string }) => {
+  const updateImageDraft = (patch: Partial<MarpitImageOptions> & { url?: string; legend?: string }) => {
     setImageTool((current) => {
       if (!current) return current
-      const nextOptions = { ...current.options, ...patch }
+      const { url: _patchUrl, legend: _patchLegend, ...optionPatch } = patch
+      const nextOptions = { ...current.options, ...optionPatch }
       if (nextOptions.fit === 'cover') nextOptions.fit = 'contain'
-      if (patch.layout === 'legend') {
-        nextOptions.background = false
-        nextOptions.side = 'none'
-      }
-      if (patch.background === true) nextOptions.layout = 'auto'
-      const next = { ...current, url: patch.url ?? current.url, options: nextOptions }
+      const next = { ...current, url: patch.url ?? current.url, legend: patch.legend ?? current.legend, options: nextOptions }
       imageToolRef.current = next
       return next
     })
@@ -796,7 +804,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       while (markerIndex >= 0) {
         const imageStart = source.lastIndexOf('![', markerIndex)
         if (imageStart >= 0 && !source.slice(imageStart, markerIndex).includes('\n')) {
-          candidates.push({ from: imageStart, to: markerIndex + marker.length })
+          const markerEnd = markerIndex + marker.length
+          const trailingAttributes = source.slice(markerEnd).match(/^\{[^}\n]*\}/)
+          candidates.push({ from: imageStart, to: markerEnd + (trailingAttributes?.[0].length ?? 0) })
         }
         markerIndex = source.indexOf(marker, markerIndex + marker.length)
       }
@@ -805,31 +815,24 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       from = nearest.from
       to = nearest.to
     }
-    const syntax = `![${formatMarpitImageAlt(current.options)}](${current.url.trim()})`
+    const syntax = `![${current.options.alt}](${current.url.trim()})${formatImageAttributes(current.options)}`
+    const change = current.legendEditable
+      ? imageParagraphReplacement(source, from, to, syntax, current.legend)
+      : { from, to, insert: syntax }
     view.dispatch({
-      changes: { from, to, insert: syntax },
-      selection: { anchor: from + syntax.length },
+      changes: change,
+      selection: { anchor: change.from + change.insert.length },
     })
     closeImageTool()
     view.focus()
   }
 
-  useEffect(() => {
-    if (!imageTool) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      closeImageTool()
-      viewRef.current?.focus()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [imageTool])
+  // Escape handling for the figure dialog lives inside FigureDialog itself.
 
   useEffect(() => {
     if (!hostRef.current || !editorVisible) return
 
-    const synchronizeContextTools = (editor: EditorView) => {
+    const synchronizeContextTools = (editor: EditorView, pointerSelect: boolean) => {
       // Once opened, the image popover owns its draft lifecycle. Focus moving
       // into a form field, remote autosave reconciliation, or a mapped editor
       // selection must not dismiss it or replace its unsaved values.
@@ -840,15 +843,17 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       const selection = editor.state.selection.main
       const text = selection.empty ? '' : editor.state.sliceDoc(selection.from, selection.to)
       const line = editor.state.doc.lineAt(selection.head)
-      const imagePattern = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
+      const imagePattern = /!\[([^\]\n]*)\]\(([^)\n]+)\)(\{[^}\n]*\})?/g
       let match: RegExpExecArray | null
-      let imageMatch: { from: number; to: number; alt: string; url: string } | null = null
-      if (selection.empty) {
+      let imageMatch: { from: number; to: number; alt: string; url: string; attributes: string | null } | null = null
+      // The popover only opens on a deliberate mouse click; keyboard cursor
+      // motion and typing may pass through the image syntax without it.
+      if (selection.empty && pointerSelect) {
         while ((match = imagePattern.exec(line.text))) {
           const from = line.from + match.index
           const to = from + match[0].length
           if (selection.head >= from && selection.head <= to) {
-            imageMatch = { from, to, alt: match[1], url: match[2].trim() }
+            imageMatch = { from, to, alt: match[1], url: match[2].trim(), attributes: match[3] ? match[3].slice(1, -1) : null }
             break
           }
         }
@@ -875,7 +880,9 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           } else if (imageMatch) {
             setSelectionTool(null)
             setAiError(null)
-            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseMarpitImageAlt(imageMatch.alt), left: position.left, top: position.imageTop }
+            const documentSource = measureView.state.doc.toString()
+            const legendContext = readImageLegend(documentSource, imageMatch.from, imageMatch.to)
+            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseImageAttributes(imageMatch.alt, imageMatch.attributes), legend: legendContext.legend || quartoImageCaption(imageMatch.alt, imageMatch.attributes) || '', legendEditable: legendContext.editable, documentSource, left: position.left, top: position.imageTop }
             imageToolRef.current = nextImageTool
             setImageTool(nextImageTool)
           } else {
@@ -931,7 +938,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
               selectedLines: selection.empty ? 0 : lastLine - firstLine + 1,
             })
             onCursorLineChangeRef.current?.(cursorLine.number)
-            synchronizeContextTools(update.view)
+            synchronizeContextTools(update.view, update.transactions.some((transaction) => transaction.isUserEvent('select.pointer')))
           }
         }),
         EditorView.theme({
@@ -964,8 +971,11 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    const current = view.state.doc.toString()
-    if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
+    // Replace only the differing span. A whole-document replacement maps the
+    // cursor to offset 0, which scrolls the editor to the top and rebuilds
+    // every image preview widget.
+    const change = minimalDocChange(view.state.doc.toString(), value)
+    if (change) view.dispatch({ changes: change })
   }, [value])
 
   useEffect(() => {
@@ -1077,23 +1087,13 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         <button className="selection-tool-close" onClick={() => setSelectionTool(null)} aria-label="Close selection tool"><X size={14} /></button>
         {aiError && <small>{aiError}</small>}
       </div>}
-      {imageTool && <aside className="image-syntax-popover" style={{ left: imageTool.left, top: imageTool.top }} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} aria-label="Image options">
-        <header><div><Image size={16} /><strong>Image</strong><span>Marpit syntax</span></div><button onClick={() => { closeImageTool(); viewRef.current?.focus() }} aria-label="Close image options"><X size={15} /></button></header>
-        <div className="image-syntax-preview"><img src={imageTool.url} alt={imageTool.options.alt} style={{ width: imageTool.options.width || undefined, height: imageTool.options.height || undefined, objectFit: imageTool.options.fit === 'auto' ? 'scale-down' : 'contain', filter: imageFilterCss(imageTool.options.filters) }} /></div>
-        <div className="image-syntax-fields">
-          <label className="image-field-wide"><span>Image URL</span><input value={imageTool.url} onChange={(event) => updateImageDraft({ url: event.target.value })} /></label>
-          <label className="image-field-wide"><span>Alt text</span><input value={imageTool.options.alt} onChange={(event) => updateImageDraft({ alt: event.target.value })} placeholder="Describe this image" /></label>
-          <label><span>Width</span><input value={imageTool.options.width} onChange={(event) => updateImageDraft({ width: event.target.value })} placeholder="e.g. 480px" /></label>
-          <label><span>Height</span><input value={imageTool.options.height} onChange={(event) => updateImageDraft({ height: event.target.value })} placeholder="e.g. 280px" /></label>
-          <label><span>Scaling</span><select value={imageTool.options.fit} onChange={(event) => updateImageDraft({ fit: event.target.value as MarpitImageOptions['fit'] })}><option value="contain">Fit · no crop</option><option value="auto">Natural size</option></select></label>
-          <label><span>Layout</span><select value={imageTool.options.layout} onChange={(event) => updateImageDraft({ layout: event.target.value as MarpitImageOptions['layout'] })}><option value="legend">Image left · legend right</option><option value="auto">Automatic flow</option><option value="hero">Hero image</option></select></label>
-          <label><span>Background side</span><select value={imageTool.options.side} disabled={!imageTool.options.background} onChange={(event) => updateImageDraft({ side: event.target.value as MarpitImageOptions['side'] })}><option value="none">Full</option><option value="left">Left</option><option value="right">Right</option></select></label>
-          <label className="image-field-check"><input type="checkbox" checked={imageTool.options.background} onChange={(event) => updateImageDraft({ background: event.target.checked })} /><span>Scene background</span></label>
-          <label><span>Split size</span><input disabled={!imageTool.options.background || imageTool.options.side === 'none'} value={imageTool.options.splitSize} onChange={(event) => updateImageDraft({ splitSize: event.target.value })} placeholder="50%" /></label>
-          <label className="image-field-wide"><span>Filters</span><input value={imageTool.options.filters} onChange={(event) => updateImageDraft({ filters: event.target.value })} placeholder="brightness:.8 sepia:50%" /></label>
-        </div>
-        <footer className="image-syntax-actions"><button onClick={() => { closeImageTool(); viewRef.current?.focus() }}>Cancel</button><button className="is-primary" onClick={saveImageSyntax} disabled={!imageTool.url.trim()}><Check size={15} /> Save</button></footer>
-      </aside>}
+      {imageTool && <FigureDialog
+        state={imageTool}
+        documentId={documentId}
+        onChange={updateImageDraft}
+        onCancel={() => { closeImageTool(); viewRef.current?.focus() }}
+        onSave={saveImageSyntax}
+      />}
       {!!imageUploads.length && <div className="image-upload-stack" aria-live="polite">
         {imageUploads.map((upload) => <div key={upload.id} className={`image-upload-toast is-${upload.status}`}>
           <span className="upload-icon">{upload.status === 'uploading' ? <LoaderCircle size={16} /> : upload.status === 'complete' ? <Check size={16} /> : <X size={16} />}</span>

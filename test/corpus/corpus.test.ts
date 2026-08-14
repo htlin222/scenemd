@@ -43,9 +43,9 @@ const OVERSIZED = new Set(['oversized-figure.md', 'oversized-math.md'])
 const KNOWN_GAPS = new Set([
   // Critical invariant "split image-caption pairs = 0" — figure glued to its
   // caption ends a scene anyway.
+  // image-heavy keep gaps at 768/640 were closed by the v5 figure layout
+  // (figure regions become one scene whenever they fit).
   ...['compact', 'balanced', 'cinematic'].flatMap((density) => [
-    `image-heavy.md@768/${density}:keep`,
-    `image-heavy.md@640/${density}:keep`,
     `code-heavy.md@768/${density}:keep`,
     `list-heavy.md@768/${density}:keep`,
   ]),

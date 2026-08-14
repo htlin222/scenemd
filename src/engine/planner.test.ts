@@ -35,6 +35,90 @@ const plannedBlockIds = (scenes: { blocks: PresentationBlock[] }[]) =>
     .filter((id, index, list) => list.indexOf(id) === index)
     .sort()
 
+describe('planScenes — sized figures', () => {
+  it('computes a sized figure from the viewport and keeps the following paragraph on its scene', () => {
+    // design v2: `size=NN%` figures are pure arithmetic — a stale or absurd DOM
+    // measurement must not strand the grouped paragraph onto the next scene.
+    const { blocks, regions } = regionsFrom(
+      '## Renal function\n\n<!-- present: group -->\n![chart](fig.png){size=45%} 圖一：說明\n\nA paragraph below the figure.\n<!-- present: end-group -->\n',
+    )
+    const shortViewport = 430
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : block.type === 'heading' ? 76 : 60))
+    const plan = planScenes(regions, measurements, shortViewport, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plannedBlockIds(plan.scenes)).toEqual(allBlockIds(blocks))
+  })
+})
+
+describe('planScenes — explicit groups', () => {
+  // `---` cuts the figure page off from the free paragraphs (design v5).
+  const GROUPED = '<!-- present: group -->\n![chart](fig.png){size=45%} 圖說\n\n重點一\n\n重點二\n<!-- present: end-group -->\n\n---\n\n自由段落甲。\n\n自由段落乙。\n'
+
+  it('never splits a present: group across scenes', () => {
+    const { blocks, regions } = regionsFrom(GROUPED)
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 150))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+    const groupScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'figure'))
+
+    expect(groupScene?.blocks.map((block) => block.type)).toEqual(['figure', 'paragraph', 'paragraph'])
+  })
+
+  it('keeps an overflowing group whole and flags the scene', () => {
+    const { blocks, regions } = regionsFrom(GROUPED)
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 330))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+    const groupScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'figure'))
+
+    expect(groupScene?.blocks).toHaveLength(3)
+    expect(groupScene?.fillRatio).toBeGreaterThan(1)
+    expect(groupScene?.warning).toBeTruthy()
+    expect(plan.overflowCount).toBeGreaterThan(0)
+  })
+})
+
+describe('planScenes — full-bleed figures', () => {
+  it('measures size against the height remaining after the heading', () => {
+    // design v5: with an H2 on the scene, size=100% means the space left
+    // under the heading — the scene fills exactly, no overflow warning.
+    const { blocks, regions } = regionsFrom('## Title\n\n![chart](fig.png){size=100%} 圖說\n')
+    const plan = planScenes(regions, measure(blocks, (b) => (b.type === 'heading' ? 76 : 300)), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure')
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('lets a lone size=100% figure fill a scene without an overflow warning', () => {
+    // The warning the author saw: size was measured against the full stage
+    // while the budget is the content area, so ≥84% always overflowed.
+    const { blocks, regions } = regionsFrom('![chart](fig.png){size=100%} 圖說\n')
+    const plan = planScenes(regions, measure(blocks, 300), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.overflowCount).toBe(0)
+  })
+})
+
+describe('planScenes — above-figure text shrinks to fit', () => {
+  it('scales oversized body text instead of pushing it off the figure page', () => {
+    // "你可以縮小文字，總之塞就對了" — above-figure prose shrinks (floor 0.6)
+    // so the author-delimited figure page holds.
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![chart](fig.png){size=45%}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 500 : block.type === 'figure' ? 280 : 60))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
+  })
+})
+
 describe('planScenes — fit test', () => {
   it('emits one scene for a region that fits comfortably', () => {
     // spec: "Comfortable regions become scenes directly."
@@ -88,13 +172,14 @@ describe('planScenes — fit test', () => {
 
 describe('planScenes — invariants from spec.md', () => {
   it('never separates a figure from the prose bound to it', () => {
-    // spec critical invariant: "split image-caption pairs = 0"
+    // spec critical invariant: "split image-caption pairs = 0". Since design
+    // v3, prose is bound to a figure explicitly via present: group markers.
     const markdown = [
       '## Section',
       ...Array.from({ length: 4 }, (_, i) => `Filler ${i}.`),
-      'Lead-in prose.',
+      '<!-- present: group -->\n\nLead-in prose.',
       '![Figure](f.png)',
-      'Explanatory copy.',
+      'Explanatory copy.\n\n<!-- present: end-group -->',
     ].join('\n\n')
     const { blocks, regions } = regionsFrom(`${markdown}\n`)
     const plan = planScenes(regions, measure(blocks, 150), VIEWPORT, 'balanced')
@@ -230,16 +315,12 @@ describe('chooseLayout', () => {
     expect(chooseLayout([block({ type: 'blockquote' })])).toBe('statement')
   })
 
-  it('chooses legend for the default figure composition', () => {
-    // The normalizer makes `legend` the default hint for images, so an
-    // ordinary figure with prose lands here rather than in text-media.
-    const scene = [block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })]
-    expect(chooseLayout(scene)).toBe('legend')
-  })
-
-  it('chooses media-dominant for a hero figure', () => {
-    const scene = [block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })]
-    expect(chooseLayout(scene)).toBe('media-dominant')
+  it('chooses the single figure layout for any composition containing a figure', () => {
+    // design v5: figure scenes have exactly one structure — optional heading,
+    // then figure left / text right. No legend, text-media, or media-dominant.
+    expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })])).toBe('figure')
+    expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })])).toBe('figure')
+    expect(chooseLayout([block({ id: 'f', type: 'figure' })])).toBe('figure')
   })
 
   it('chooses text when there is no media', () => {
