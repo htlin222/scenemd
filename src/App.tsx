@@ -45,6 +45,7 @@ import { Cheatsheet } from './app/CheatsheetDialog'
 import { DocumentsHome, useDocumentLibrary } from './app/DocumentsHome'
 import { MeasurementRoot, useMeasuredPlan } from './app/useMeasuredPlan'
 import { useDocument } from './app/useDocument'
+import { usePresentationRuntime } from './app/usePresentationRuntime'
 import { LlmPromptDialog } from './app/LlmPromptDialog'
 import {
   CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
@@ -84,8 +85,6 @@ function App() {
   const [hackMDSyncing, setHackMDSyncing] = useState(false)
   const [directHeaderCount, setDirectHeaderCount] = useState(() => directHeaderActionCount(window.innerWidth))
   const [headerOverflowOpen, setHeaderOverflowOpen] = useState(false)
-  const [presenting, setPresenting] = useState(false)
-  const [presenterWindow, setPresenterWindow] = useState<Window | null>(null)
   const [notesHeight, setNotesHeight] = useState(() => {
     const saved = Number(localStorage.getItem('scenemd-preview-notes-height'))
     return Number.isFinite(saved) && saved >= 90 && saved <= 320 ? saved : 150
@@ -94,14 +93,11 @@ function App() {
   const [transcriptMode, setTranscriptMode] = useState<'verbatim' | 'tldr'>('verbatim')
   const [transcriptBusy, setTranscriptBusy] = useState(false)
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
-  const [showShortcutHint, setShowShortcutHint] = useState(false)
   const [sceneIndex, setSceneIndex] = useState(0)
+  const [presenting, setPresenting] = useState(false)
   const [editorCursorLine, setEditorCursorLine] = useState(1)
   const [editorScrollRequest, setEditorScrollRequest] = useState<{ line: number; key: number } | null>(null)
   const [sceneSyncEnabled, setSceneSyncEnabled] = useState(() => localStorage.getItem('scenemd-scene-sync') !== 'false')
-  const [revealIndex, setRevealIndex] = useState(0)
-  const [blank, setBlank] = useState<'black' | 'white' | null>(null)
-  const [presentationZoom, setPresentationZoom] = useState(1)
   const [viewport, setViewport] = useState({ width: 960, height: 540 })
   const previewRef = useRef<HTMLDivElement>(null)
   const resizingPreviewRef = useRef(false)
@@ -318,6 +314,17 @@ function App() {
   const currentSpeakerNotes = useMemo(() => sceneSpeakerNotes(currentScene), [currentScene])
   const currentSpeakerNoteText = currentSpeakerNotes.join('\n\n')
   const stepCount = currentScene?.blocks.reduce((total, block) => total + blockRevealSteps(block), 0) ?? 0
+
+  const {
+    revealIndex, setRevealIndex,
+    blank, setBlank,
+    presentationZoom, setPresentationZoom,
+    showShortcutHint,
+    presenterWindow,
+    navigateToLabel, goNext, goPrevious,
+    openPresenterWindow, closePresenterWindow,
+    startPresentation, exitPresentation,
+  } = usePresentationRuntime(presenting, setPresenting, plan, regions, stepCount, sceneIndex, setSceneIndex, scrollEditorToScene, documentTitle, theme, route.kind)
   const navigationLabels = useMemo(() => [...new Set(regions
     .filter((region) => region.blocks[0]?.type === 'heading' && region.blocks[0].depth === 1)
     .map((region) => region.headingPath[0])
@@ -361,53 +368,6 @@ function App() {
     }
   }, [activeDocumentId, changeSpeakerNote, currentScene, plan.scenes, sceneIndex, transcriptBusy, transcriptMode])
 
-  const navigateToLabel = useCallback((label: string) => {
-    const region = regions.find((candidate) => candidate.blocks[0]?.type === 'heading' && candidate.blocks[0].depth === 1 && candidate.headingPath[0] === label)
-    const targetIndex = region ? plan.scenes.findIndex((scene) => scene.regionId === region.id) : -1
-    if (targetIndex >= 0) { setSceneIndex(targetIndex); setRevealIndex(0); scrollEditorToScene(targetIndex) }
-  }, [plan.scenes, regions, scrollEditorToScene])
-
-  const goNext = useCallback(() => {
-    setBlank(null)
-    if (revealIndex < stepCount) setRevealIndex((value) => value + 1)
-    else {
-      const targetIndex = Math.min(sceneIndex + 1, plan.scenes.length - 1)
-      setSceneIndex(targetIndex)
-      setRevealIndex(0)
-      scrollEditorToScene(targetIndex)
-    }
-  }, [plan.scenes.length, revealIndex, sceneIndex, scrollEditorToScene, stepCount])
-
-  const goPrevious = useCallback(() => {
-    setBlank(null)
-    if (revealIndex > 0) setRevealIndex((value) => value - 1)
-    else {
-      const targetIndex = Math.max(0, sceneIndex - 1)
-      setSceneIndex(targetIndex)
-      setRevealIndex(0)
-      scrollEditorToScene(targetIndex)
-    }
-  }, [revealIndex, sceneIndex, scrollEditorToScene])
-
-  const closePresenterWindow = useCallback(() => setPresenterWindow(null), [])
-
-  const openPresenterWindow = useCallback(() => {
-    if (presenterWindow && !presenterWindow.closed) { presenterWindow.focus(); return }
-    const popup = window.open('', 'scenemd-presenter', 'popup=yes,width=1280,height=820')
-    if (!popup) return
-    popup.document.title = `${documentTitle} — Presenter`
-    popup.document.documentElement.dataset.theme = theme
-    document.querySelectorAll('style,link[rel="stylesheet"]').forEach((node) => popup.document.head.appendChild(node.cloneNode(true)))
-    popup.document.body.innerHTML = ''
-    popup.document.body.className = 'presenter-window-body'
-    setPresenterWindow(popup)
-  }, [documentTitle, presenterWindow, theme])
-
-  useEffect(() => {
-    if (!presenterWindow || presenterWindow.closed) return
-    presenterWindow.document.documentElement.dataset.theme = theme
-  }, [presenterWindow, theme])
-
   const beginNotesResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
     const startY = event.clientY
@@ -435,61 +395,6 @@ function App() {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onEnd)
     window.addEventListener('pointercancel', onCancel)
-  }
-
-  const exitPresentation = useCallback(() => {
-    setPresenting(false)
-    setBlank(null)
-    if (document.fullscreenElement) void document.exitFullscreen()
-  }, [])
-
-  useEffect(() => {
-    if (!presenting) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'ArrowDown') { event.preventDefault(); goNext() }
-      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); goPrevious() }
-      else if (event.key.toLowerCase() === 'b') setBlank((value) => value === 'black' ? null : 'black')
-      else if (event.key.toLowerCase() === 'w') setBlank((value) => value === 'white' ? null : 'white')
-      else if (event.key.toLowerCase() === 's') openPresenterWindow()
-      else if (event.key === '+' || event.key === '=') setPresentationZoom((value) => Math.min(1.5, Number((value + 0.1).toFixed(2))))
-      else if (event.key === '-') setPresentationZoom((value) => Math.max(0.75, Number((value - 0.1).toFixed(2))))
-      else if (event.key === '0') setPresentationZoom(1)
-      else if (event.key === 'Escape') exitPresentation()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [presenting, goNext, goPrevious, exitPresentation, openPresenterWindow])
-
-  useEffect(() => {
-    if (!presenting) { setShowShortcutHint(false); return }
-    let hideTimer = 0
-    const showHint = () => {
-      setShowShortcutHint(true)
-      window.clearTimeout(hideTimer)
-      hideTimer = window.setTimeout(() => setShowShortcutHint(false), 1400)
-    }
-    showHint()
-    window.addEventListener('mousemove', showHint, { passive: true })
-    return () => { window.clearTimeout(hideTimer); window.removeEventListener('mousemove', showHint) }
-  }, [presenting])
-
-  useEffect(() => {
-    const onShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !presenting && route.kind !== 'home') {
-        event.preventDefault()
-        setPresenting(true)
-        setRevealIndex(0)
-        document.documentElement.requestFullscreen?.().catch(() => undefined)
-      }
-    }
-    window.addEventListener('keydown', onShortcut)
-    return () => window.removeEventListener('keydown', onShortcut)
-  }, [presenting, route.kind])
-
-  const startPresentation = () => {
-    setPresenting(true)
-    setRevealIndex(0)
-    document.documentElement.requestFullscreen?.().catch(() => undefined)
   }
 
   const togglePreview = () => {
