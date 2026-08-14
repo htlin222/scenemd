@@ -9,6 +9,13 @@ import type {
   SemanticRegion,
 } from './types'
 
+// Fixed cost per additional scene in the global pagination objective. A good
+// on-target scene scores roughly 150 and a mediocre half-empty one roughly
+// 110, so a boundary must recover more than this in combined score before
+// splitting beats keeping content together — without it, summing mostly
+// positive per-scene scores would reward shattering a region into thin scenes.
+const SCENE_COST = 140
+
 const DENSITY_TARGETS: Record<Density, { target: number; comfortable: number; maximum: number }> = {
   compact: { target: 0.78, comfortable: 0.84, maximum: 0.93 },
   balanced: { target: 0.65, comfortable: 0.75, maximum: 0.88 },
@@ -314,24 +321,50 @@ export function planScenes(
       continue
     }
 
-    let cursor = 0
-    while (cursor < plannedBlocks.length) {
-      const candidates: Array<ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }> = []
-      const limit = Math.min(plannedBlocks.length, cursor + 8)
-      for (let end = cursor + 1; end <= limit; end += 1) {
-        const candidateBlocks = plannedBlocks.slice(cursor, end)
+    // Globally optimal pagination over the region (#8). The previous greedy
+    // scan committed to the locally best boundary and never reconsidered it,
+    // which produced avoidable keep violations and orphaned headings whenever
+    // a good early break forced a bad late one. This is the Knuth-Plass shape
+    // of the same problem: score every feasible scene (start, end), then pick
+    // the partition maximizing the total score by dynamic programming.
+    //
+    // Candidates extend until they overflow, so the search window is derived
+    // from capacity rather than a fixed block count. A single-block candidate
+    // is always feasible — an unsplittable oversized block becomes its own
+    // warned scene (#7) instead of making the region unplannable.
+    //
+    // Per-scene scores are mostly positive, so maximizing their plain sum
+    // would reward fragmenting into many thin scenes. Each boundary therefore
+    // pays a fixed cost: a split must earn more than SCENE_COST in combined
+    // score to beat staying together, which is the sum-form of "prefer
+    // coherent under-filled scenes over crowded ones, but do not shatter".
+    const total = plannedBlocks.length
+    type Candidate = ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }
+    const bestScore = Array.from({ length: total + 1 }, () => 0)
+    const bestChoice = Array.from({ length: total + 1 }, (): Candidate | null => null)
+    for (let start = total - 1; start >= 0; start -= 1) {
+      let bestTotal = Number.NEGATIVE_INFINITY
+      let chosen: Candidate | null = null
+      for (let end = start + 1; end <= total; end += 1) {
+        const candidateBlocks = plannedBlocks.slice(start, end)
         const used = usedHeight(candidateBlocks, measurements)
-        candidates.push({
-          ...evaluate(candidateBlocks, end, plannedBlocks.length, used, capacity, density, previousEnds, plannedBlocks[end]),
-          blocks: candidateBlocks,
-          end,
-          used,
-        })
+        const evaluated = evaluate(candidateBlocks, end, total, used, capacity, density, previousEnds, plannedBlocks[end])
+        if (evaluated.invalid) break
+        const candidateTotal = evaluated.total + bestScore[end] - (end < total ? SCENE_COST : 0)
+        if (candidateTotal > bestTotal) {
+          bestTotal = candidateTotal
+          chosen = { ...evaluated, blocks: candidateBlocks, end, used }
+        }
+        if (used > capacity) break
       }
-      const valid = candidates.filter((candidate) => !candidate.invalid)
-      const winner = (valid.length ? valid : candidates).sort((a, b) => b.total - a.total)[0]
-      scenes.push(makeScene(planningRegion, winner.blocks, winner.used, capacity, winner.total, winner.breakdown))
-      cursor = winner.end
+      bestScore[start] = bestTotal
+      bestChoice[start] = chosen
+    }
+    for (let start = 0; start < total; ) {
+      const choice = bestChoice[start]
+      if (!choice) break
+      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown))
+      start = choice.end
     }
   }
 
