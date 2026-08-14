@@ -30,7 +30,7 @@ import {
   Unlink,
   X,
 } from 'lucide-react'
-import { buildCitationReferenceMap, SceneView, BlockView, sceneSpeakerNotes } from './components/SceneView'
+import { buildCitationReferenceMap, SceneView, sceneSpeakerNotes } from './components/SceneView'
 import { MarkdownDocumentView, MarkdownEditor, type EditorMode } from './components/MarkdownEditor'
 import { PresentationSettingsDialog } from './components/PresentationSettingsDialog'
 import { HackMDSyncDialog } from './components/HackMDSyncDialog'
@@ -38,17 +38,16 @@ import { BibliographyDialog } from './components/BibliographyDialog'
 import { ExportDialog } from './components/ExportDialog'
 import { PresenterWindow } from './components/PresenterWindow'
 import { PresentationRuntimeTools } from './components/PresentationRuntimeTools'
-import { buildSemanticRegions, parsePresentationDocument } from './engine/semantics'
-import { planScenes, withPresentationCover } from './engine/planner'
-import type { Density, PresentationConfig, ScenePlan, ThemeMode } from './engine/types'
+import type { Density, PresentationConfig, ThemeMode } from './engine/types'
 import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
 import { downloadBlob, exportFileName } from './export'
 import { DEMO_MARKDOWN } from './app/constants'
 import { Cheatsheet } from './app/CheatsheetDialog'
 import { DocumentsHome, useDocumentLibrary } from './app/DocumentsHome'
+import { MeasurementRoot, useMeasuredPlan } from './app/useMeasuredPlan'
 import { LlmPromptDialog } from './app/LlmPromptDialog'
 import {
-  EMPTY_PLAN, CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
+  CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
   type Route, type SaveStatus, type HeaderActionSpec, type DocumentPayload,
   type SaveConflictState, type ConflictBackup, type DeployVersion,
   directHeaderActionCount, stashConflictBackup, readConflictBackup, clearConflictBackup, conflictExcerpts,
@@ -105,11 +104,7 @@ function App() {
   const [blank, setBlank] = useState<'black' | 'white' | null>(null)
   const [presentationZoom, setPresentationZoom] = useState(1)
   const [viewport, setViewport] = useState({ width: 960, height: 540 })
-  const [measurements, setMeasurements] = useState<Map<string, number>>(new Map())
-  const [measuring, setMeasuring] = useState(true)
   const previewRef = useRef<HTMLDivElement>(null)
-  const measureRef = useRef<HTMLDivElement>(null)
-  const previousPlanRef = useRef<ScenePlan>(EMPTY_PLAN)
   const lastSavedMarkdownRef = useRef('')
   const lastSavedPresentationConfigRef = useRef(JSON.stringify(defaultPresentationConfig('Untitled document')))
   const liveMarkdownRef = useRef(markdown)
@@ -119,14 +114,30 @@ function App() {
   liveMarkdownRef.current = markdown
   livePresentationConfigRef.current = presentationConfig
 
-  const blocks = useMemo(() => parsePresentationDocument(markdown), [markdown])
-  const regions = useMemo(() => buildSemanticRegions(blocks), [blocks])
-  const plan = useMemo(
-    () => withPresentationCover(
-      planScenes(regions, measurements, presenting ? window.innerHeight : viewport.height, density, previousPlanRef.current),
-      presentationConfig,
-    ),
-    [regions, measurements, viewport.height, density, presenting, presentationConfig],
+  const { blocks, regions, plan, measuring, measureRef } = useMeasuredPlan(
+    markdown, viewport, density, theme, presenting, presentationConfig,
+    // Keep the presented scene stable across replans by remapping the index
+    // against the previous plan before the ref advances.
+    (previousPlan, nextPlan) => {
+      setSceneIndex((current) => {
+        const previousScene = previousPlan.scenes[current]
+        if (!previousScene) return Math.min(current, Math.max(0, nextPlan.scenes.length - 1))
+
+        if (previousScene.role === 'cover') {
+          const coverIndex = nextPlan.scenes.findIndex((scene) => scene.role === 'cover')
+          return coverIndex >= 0 ? coverIndex : 0
+        }
+
+        const previousBlockIds = new Set(previousScene.blocks.map((block) => block.id))
+        const matchingBlockIndex = nextPlan.scenes.findIndex((scene) => scene.blocks.some((block) => previousBlockIds.has(block.id)))
+        if (matchingBlockIndex >= 0) return matchingBlockIndex
+
+        const matchingRegionIndex = nextPlan.scenes.findIndex((scene) => scene.regionId === previousScene.regionId && scene.role === previousScene.role)
+        if (matchingRegionIndex >= 0) return matchingRegionIndex
+
+        return Math.min(current, Math.max(0, nextPlan.scenes.length - 1))
+      })
+    },
   )
   const activeDocumentId = route.kind === 'document' ? route.id : 'readonly'
   const citationReferences = useMemo(() => buildCitationReferenceMap(plan.scenes), [plan.scenes])
@@ -363,29 +374,6 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [markdown, presentationConfig, documentRevision, documentTitle, loading, route, saveConflict])
 
-  useEffect(() => {
-    const previousPlan = previousPlanRef.current
-    setSceneIndex((current) => {
-      const previousScene = previousPlan.scenes[current]
-      if (!previousScene) return Math.min(current, Math.max(0, plan.scenes.length - 1))
-
-      if (previousScene.role === 'cover') {
-        const coverIndex = plan.scenes.findIndex((scene) => scene.role === 'cover')
-        return coverIndex >= 0 ? coverIndex : 0
-      }
-
-      const previousBlockIds = new Set(previousScene.blocks.map((block) => block.id))
-      const matchingBlockIndex = plan.scenes.findIndex((scene) => scene.blocks.some((block) => previousBlockIds.has(block.id)))
-      if (matchingBlockIndex >= 0) return matchingBlockIndex
-
-      const matchingRegionIndex = plan.scenes.findIndex((scene) => scene.regionId === previousScene.regionId && scene.role === previousScene.role)
-      if (matchingRegionIndex >= 0) return matchingRegionIndex
-
-      return Math.min(current, Math.max(0, plan.scenes.length - 1))
-    })
-    previousPlanRef.current = plan
-  }, [plan])
-
   useLayoutEffect(() => {
     if (!previewRef.current) return
     const observer = new ResizeObserver(([entry]) => {
@@ -423,21 +411,6 @@ function App() {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onEnd, { once: true })
   }
-
-  useLayoutEffect(() => {
-    if (!measureRef.current) return
-    setMeasuring(true)
-    const frame = window.requestAnimationFrame(() => {
-      const next = new Map<string, number>()
-      measureRef.current?.querySelectorAll<HTMLElement>('[data-measure-id], [data-measure-item-id]').forEach((element) => {
-        const id = element.dataset.measureId ?? element.dataset.measureItemId
-        if (id) next.set(id, element.getBoundingClientRect().height)
-      })
-      setMeasurements(next)
-      setMeasuring(false)
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [blocks, viewport.width, density, theme])
 
   const currentScene = plan.scenes[sceneIndex]
   const currentSpeakerNotes = useMemo(() => sceneSpeakerNotes(currentScene), [currentScene])
@@ -863,7 +836,7 @@ function App() {
         <button onClick={() => void forceRefreshForDeploy()} disabled={refreshingDeploy}>{refreshingDeploy ? '更新中…' : '重新整理'}</button>
       </aside>}
 
-      {route.kind !== 'home' && <div className="measurement-root" ref={measureRef} aria-hidden="true" style={{ width: Math.max(320, viewport.width - 150) }}>{blocks.map((block) => <div data-measure-id={block.id} key={block.id}><BlockView block={block} measurement /></div>)}</div>}
+      {route.kind !== 'home' && <MeasurementRoot blocks={blocks} measureRef={measureRef} width={Math.max(320, viewport.width - 150)} />}
 
       {presenting && currentScene && <div className="presentation-overlay" role="dialog" aria-label="Presentation mode">
         <div className="presentation-zoom-layer" style={{ transform: `scale(${presentationZoom})` }}><SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={revealIndex} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /></div>
