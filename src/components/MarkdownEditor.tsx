@@ -6,12 +6,13 @@ import { StateField, type EditorState, type Range } from '@codemirror/state'
 import { markdown } from '@codemirror/lang-markdown'
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
-import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
+import { autocompletion } from '@codemirror/autocomplete'
 import { tags } from '@lezer/highlight'
-import ReactMarkdown from 'react-markdown'
-import rehypeKatex from 'rehype-katex'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
+import { documentOutline, type OutlineItem } from './editor/outline'
+import { presentationHintCompletion } from './editor/hints'
+import { columnsMarkdown, insertBlock, insertColumns, insertLink, prefixLines, replaceSelection, type Tool } from './editor/commands'
+import { detectPastedTable, markdownTableFromRows } from './editor/markdownTable'
+import { MarkdownDocumentView } from './editor/MarkdownDocumentView'
 import {
   Bold,
   BookPlus,
@@ -50,11 +51,9 @@ import {
   existingCitationReferenceNumber,
   insertCitationReference,
   normalizeCitationIdentifier,
-  remarkBracketCitations,
   type CitationIdentifier,
 } from '../citations'
-import { formatImageAttributes, imageFilterCss, parseImageAttributes, parseMarpitImageAlt, quartoImageCaption, type MarpitImageOptions } from '../imageSyntax'
-import { remarkFoldImageAttributes } from '../lib/imageAttributesMdast'
+import { formatImageAttributes, parseImageAttributes, quartoImageCaption, type MarpitImageOptions } from '../imageSyntax'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
 import { FigureDialog } from './FigureDialog'
 import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
@@ -103,78 +102,6 @@ const markdownImagePreviews = StateField.define<DecorationSet>({
   update(value, transaction) { return transaction.docChanged ? imagePreviewDecorations(transaction.state) : value.map(transaction.changes) },
   provide: (field) => EditorView.decorations.from(field),
 })
-
-export function documentVisibleMarkdown(value: string): string {
-  const lines = value.split('\n')
-  const visible: string[] = []
-  let hiddenMode: 'await' | 'list' | 'paragraph' | 'fence' | null = null
-
-  for (const line of lines) {
-    if (/^\s*<!--\s*present:\s*(?:step|only)\s*-->\s*$/i.test(line)) {
-      hiddenMode = 'await'
-      continue
-    }
-    if (hiddenMode === 'await') {
-      if (!line.trim()) continue
-      if (/^\s*(?:[-+*]|\d+[.)])\s+/.test(line)) {
-        hiddenMode = 'list'
-        continue
-      }
-      if (/^\s*```/.test(line)) {
-        hiddenMode = 'fence'
-        continue
-      }
-      if (/^\s*(?:#{1,6}\s|!\[|>|\$\$|---\s*$)/.test(line)) {
-        hiddenMode = null
-        continue
-      }
-      hiddenMode = 'paragraph'
-      continue
-    }
-    if (hiddenMode === 'list') {
-      if (/^\s*(?:[-+*]|\d+[.)])\s+/.test(line) || /^\s{2,}\S/.test(line) || !line.trim()) continue
-      hiddenMode = null
-    } else if (hiddenMode === 'paragraph') {
-      if (!line.trim()) hiddenMode = null
-      continue
-    } else if (hiddenMode === 'fence') {
-      if (/^\s*```/.test(line)) hiddenMode = null
-      continue
-    }
-    visible.push(line)
-  }
-  return visible.join('\n')
-}
-
-export function MarkdownDocumentView({ value, className = '' }: { value: string; className?: string }) {
-  return (
-    <article className={`markdown-document ${className}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkBracketCitations, remarkFoldImageAttributes]}
-        rehypePlugins={[rehypeKatex]}
-        skipHtml
-        components={{
-          a({ href, children }) {
-            if (href?.startsWith('#citation-')) return <sup className="citation-marker citation-key"><span title="Pandoc citation key">{children}</span></sup>
-            return href?.startsWith('#reference-')
-              ? <sup className="citation-marker"><a href={href}>{children}</a></sup>
-              : <a href={href}>{children}</a>
-          },
-          img({ alt = '', src = '' }) {
-            const options = parseMarpitImageAlt(alt)
-            const style: CSSProperties = {
-              width: options.width || undefined,
-              height: options.height || undefined,
-              objectFit: 'contain',
-              filter: imageFilterCss(options.filters),
-            }
-            return <img src={src} alt={options.alt} style={style} />
-          },
-        }}
-      >{documentVisibleMarkdown(value)}</ReactMarkdown>
-    </article>
-  )
-}
 
 interface MarkdownEditorProps {
   value: string
@@ -238,207 +165,6 @@ interface CitationLookupState {
   identifier?: CitationIdentifier
 }
 
-interface OutlineItem {
-  level: 1 | 2 | 3
-  text: string
-  offset: number
-  line: number
-  previewIndex: number
-}
-
-function documentOutline(value: string): OutlineItem[] {
-  const visible = documentVisibleMarkdown(value)
-  const outline: OutlineItem[] = []
-  let sourceCursor = 0
-  visible.split('\n').forEach((line) => {
-    const sourceOffset = value.indexOf(line, sourceCursor)
-    if (sourceOffset >= 0) sourceCursor = sourceOffset + line.length
-    const match = line.match(/^\s{0,3}(#{1,3})\s+(.+?)\s*#*\s*$/)
-    if (!match || sourceOffset < 0) return
-    const text = match[2]
-      .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .replace(/[*_~`]/g, '')
-      .replace(/<[^>]+>/g, '')
-      .trim()
-    if (!text) return
-    outline.push({
-      level: match[1].length as OutlineItem['level'],
-      text,
-      offset: sourceOffset + line.indexOf('#'),
-      line: value.slice(0, sourceOffset).split('\n').length,
-      previewIndex: outline.length,
-    })
-  })
-  return outline
-}
-
-const PRESENTATION_HINTS = [
-  { label: '<!-- present: break -->', detail: 'Force a scene break' },
-  { label: '<!-- present: keep -->', detail: 'Keep the next block together' },
-  { label: '<!-- present: hero -->', detail: 'Emphasize the next image' },
-  { label: '<!-- present: hide -->', detail: 'Hide the next block in presentation' },
-  { label: '<!-- present: only -->', detail: 'Show the next block only in presentation' },
-  { label: '<!-- present: step -->', detail: 'Reveal the next list item by item' },
-  { label: '<!-- present: group -->', detail: 'Start a group that stays on one scene' },
-  { label: '<!-- present: end-group -->', detail: 'End the same-scene group' },
-  { label: '<!-- present: columns -->', detail: 'Start responsive semantic columns' },
-  { label: '<!-- present: column -->', detail: 'Start another column' },
-  { label: '<!-- present: end-columns -->', detail: 'End semantic columns' },
-]
-
-function presentationHintCompletion(context: CompletionContext): CompletionResult | null {
-  const token = context.matchBefore(/<!--\s*present:\s*[a-z-]*/i)
-  if (!token || (!context.explicit && token.from === token.to)) return null
-  return {
-    from: token.from,
-    options: PRESENTATION_HINTS.map((hint) => ({ ...hint, type: 'keyword' })),
-    validFor: /<!--\s*present:\s*[a-z-]*\s*(?:-->)?/i,
-  }
-}
-
-const markdownHighlightStyle = HighlightStyle.define([
-  { tag: tags.heading, color: 'var(--accent)', fontWeight: '700' },
-  { tag: [tags.meta, tags.processingInstruction], color: 'var(--markdown-syntax)' },
-  { tag: [tags.link, tags.url], color: 'var(--markdown-link)', textDecoration: 'underline' },
-  { tag: tags.strong, color: 'var(--ink)', fontWeight: '700' },
-  { tag: tags.emphasis, color: 'var(--ink)', fontStyle: 'italic' },
-  { tag: tags.quote, color: 'var(--markdown-quote)' },
-  { tag: [tags.monospace, tags.string], color: 'var(--markdown-code)' },
-  { tag: tags.comment, color: 'var(--markdown-quote)', fontStyle: 'italic' },
-])
-
-interface Tool {
-  label: string
-  icon: typeof Bold
-  action: (view: EditorView) => void
-}
-
-function replaceSelection(view: EditorView, before: string, after: string, placeholder: string) {
-  const { from, to } = view.state.selection.main
-  const selected = view.state.sliceDoc(from, to) || placeholder
-  view.dispatch({
-    changes: { from, to, insert: `${before}${selected}${after}` },
-    selection: { anchor: from + before.length, head: from + before.length + selected.length },
-  })
-  view.focus()
-}
-
-function prefixLines(view: EditorView, prefix: string) {
-  const selection = view.state.selection.main
-  const startLine = view.state.doc.lineAt(selection.from)
-  const endLine = view.state.doc.lineAt(selection.to)
-  const changes = []
-  for (let number = startLine.number; number <= endLine.number; number += 1) {
-    changes.push({ from: view.state.doc.line(number).from, insert: prefix })
-  }
-  view.dispatch({ changes })
-  view.focus()
-}
-
-function insertLink(view: EditorView, image = false) {
-  const { from, to } = view.state.selection.main
-  const selected = view.state.sliceDoc(from, to) || (image ? 'alt text' : 'link text')
-  const prefix = image ? '![' : '['
-  const insert = `${prefix}${selected}](https://)`
-  const urlStart = from + prefix.length + selected.length + 2
-  view.dispatch({ changes: { from, to, insert }, selection: { anchor: urlStart, head: urlStart + 8 } })
-  view.focus()
-}
-
-function insertBlock(view: EditorView, content: string) {
-  const { from, to } = view.state.selection.main
-  const lineStart = view.state.doc.lineAt(from).from
-  const insert = `${lineStart === 0 ? '' : '\n'}${content}\n`
-  view.dispatch({ changes: { from: lineStart, to, insert }, selection: { anchor: lineStart + insert.length } })
-  view.focus()
-}
-
-function selectionPoints(value: string): string[] {
-  const linePoints = value.split(/\r?\n/).map((line) => line.trim().replace(/^[-+*]\s+/, '')).filter(Boolean)
-  if (linePoints.length > 1) return linePoints
-  const sentences = value.replace(/\s+/g, ' ').trim().match(/[^.!?。！？；;]+[.!?。！？；;]?/g)
-  return sentences?.map((sentence) => sentence.trim()).filter(Boolean) ?? []
-}
-
-function columnsMarkdown(value: string): string {
-  const points = selectionPoints(value)
-  const midpoint = Math.max(1, Math.ceil(points.length / 2))
-  const left = points.slice(0, midpoint)
-  const right = points.slice(midpoint)
-  const bullets = (items: string[], fallback: string) => (items.length ? items : [fallback]).map((item) => `- ${item}`).join('\n')
-  return `<!-- present: columns -->\n### Key points\n\n${bullets(left, 'Add a key point')}\n\n### Details\n\n${bullets(right, 'Add supporting detail')}\n<!-- present: end-columns -->`
-}
-
-function insertColumns(view: EditorView) {
-  const { from, to } = view.state.selection.main
-  const selected = view.state.sliceDoc(from, to)
-  const content = columnsMarkdown(selected)
-  const lineStart = view.state.doc.lineAt(from).from
-  const prefix = lineStart === 0 ? '' : '\n'
-  const insert = `${prefix}${content}\n`
-  view.dispatch({ changes: { from: lineStart, to, insert }, selection: { anchor: lineStart + insert.length } })
-  view.focus()
-}
-
-function parseDelimitedTable(value: string, delimiter: ',' | '\t'): string[][] {
-  const rows: string[][] = []
-  let row: string[] = []
-  let cell = ''
-  let quoted = false
-  for (let index = 0; index < value.length; index += 1) {
-    const character = value[index]
-    if (character === '"') {
-      if (quoted && value[index + 1] === '"') { cell += '"'; index += 1 } else quoted = !quoted
-    } else if (character === delimiter && !quoted) {
-      row.push(cell); cell = ''
-    } else if ((character === '\n' || character === '\r') && !quoted) {
-      if (character === '\r' && value[index + 1] === '\n') index += 1
-      row.push(cell); cell = ''
-      if (row.some((entry) => entry.trim())) rows.push(row)
-      row = []
-    } else {
-      cell += character
-    }
-  }
-  row.push(cell)
-  if (row.some((entry) => entry.trim())) rows.push(row)
-  return rows
-}
-
-function tableFromHtml(html: string): string[][] {
-  if (!html.trim()) return []
-  const parsed = new DOMParser().parseFromString(html, 'text/html')
-  const table = parsed.querySelector('table')
-  if (!table) return []
-  return [...table.querySelectorAll('tr')].map((row) => [...row.querySelectorAll(':scope > th, :scope > td')].map((cell) => {
-    const clone = cell.cloneNode(true) as HTMLElement
-    clone.querySelectorAll('br').forEach((breakElement) => breakElement.replaceWith(' · '))
-    return clone.textContent?.replace(/\s+/g, ' ').trim() ?? ''
-  })).filter((row) => row.length > 0)
-}
-
-function detectPastedTable(source: string, clipboardHtml = ''): { rows: string[][]; format: 'Word / HTML' | 'TSV' | 'CSV' | null } {
-  const htmlRows = tableFromHtml(clipboardHtml || (/<table[\s>]/i.test(source) ? source : ''))
-  if (htmlRows.length) return { rows: htmlRows, format: 'Word / HTML' }
-  if (source.includes('\t')) return { rows: parseDelimitedTable(source, '\t'), format: 'TSV' }
-  const csvRows = parseDelimitedTable(source, ',')
-  if (csvRows.length && csvRows.some((row) => row.length > 1)) return { rows: csvRows, format: 'CSV' }
-  return { rows: [], format: null }
-}
-
-function markdownTableFromRows(rows: string[][]): string {
-  const columnCount = Math.max(0, ...rows.map((row) => row.length))
-  if (!rows.length || columnCount < 2) return ''
-  const cleanCell = (cell = '') => cell.trim().replace(/\|/g, '\\|').replace(/\r?\n/g, ' · ')
-  const normalized = rows.map((row) => Array.from({ length: columnCount }, (_, index) => cleanCell(row[index])))
-  return [
-    `| ${normalized[0].join(' | ')} |`,
-    `| ${Array.from({ length: columnCount }, () => '---').join(' | ')} |`,
-    ...normalized.slice(1).map((row) => `| ${row.join(' | ')} |`),
-  ].join('\n')
-}
-
 const tools: Tool[] = [
   { label: 'Add heading', icon: Heading2, action: (view) => prefixLines(view, '## ') },
   { label: 'Add bold text', icon: Bold, action: (view) => replaceSelection(view, '**', '**', 'bold text') },
@@ -457,6 +183,17 @@ const tools: Tool[] = [
   { label: 'Add table', icon: Table2, action: (view) => insertBlock(view, '| Column 1 | Column 2 |\n| --- | --- |\n| Cell | Cell |') },
   { label: 'Add horizontal rule', icon: Minus, action: (view) => insertBlock(view, '---') },
 ]
+
+const markdownHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading, color: 'var(--accent)', fontWeight: '700' },
+  { tag: [tags.meta, tags.processingInstruction], color: 'var(--markdown-syntax)' },
+  { tag: [tags.link, tags.url], color: 'var(--markdown-link)', textDecoration: 'underline' },
+  { tag: tags.strong, color: 'var(--ink)', fontWeight: '700' },
+  { tag: tags.emphasis, color: 'var(--ink)', fontStyle: 'italic' },
+  { tag: tags.quote, color: 'var(--markdown-quote)' },
+  { tag: [tags.monospace, tags.string], color: 'var(--markdown-code)' },
+  { tag: tags.comment, color: 'var(--markdown-quote)', fontStyle: 'italic' },
+])
 
 export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onReset, documentId, saveStatus, onCursorLineChange, scrollRequest }: MarkdownEditorProps) {
   const editorVisible = mode !== 'preview'

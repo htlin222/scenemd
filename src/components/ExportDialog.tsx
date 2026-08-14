@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Download, FileCode2, FileText, FileType2, LoaderCircle, MonitorPlay, Presentation, X } from 'lucide-react'
 import type { InlineNode, PresentationBlock, PresentationConfig, Scene } from '../engine/types'
 import { parsePresentationDocument } from '../engine/semantics'
-import { documentVisibleMarkdown, MarkdownDocumentView } from './MarkdownEditor'
+import { documentVisibleMarkdown, MarkdownDocumentView } from './editor/MarkdownDocumentView'
 import { buildCitationReferenceMap, SceneView, sceneSpeakerNotes } from './SceneView'
 import { documentHtml, downloadBlob, exportFileName, inlineText, slideHtml, type ExportFormat } from '../export'
 
