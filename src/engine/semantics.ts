@@ -133,6 +133,13 @@ function parseDirective(value: string): Directives | null {
   return { [match[1].toLowerCase()]: true }
 }
 
+function parseGroupDirective(value: string): 'start' | 'end' | null {
+  const normalized = value.trim().toLowerCase()
+  if (normalized === 'present: group') return 'start'
+  if (normalized === 'present: end-group') return 'end'
+  return null
+}
+
 function parseColumnsDirective(value: string): 'start' | 'next' | 'end' | null {
   const normalized = value.trim().toLowerCase()
   if (/^present:\s*columns(?:\s+\d+)?$/.test(normalized)) return 'start'
@@ -330,6 +337,8 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
   let referencesDepth: number | null = null
   let activeColumns: PresentationBlock[][] | null = null
   let activeCodeGroup: PresentationBlock[] | null = null
+  let activeGroup: string | null = null
+  let groupCount = 0
   let pendingSpeakerNotes: Array<{ text: string; range: SourceRange }> = []
 
   const lastAuthoredBlock = () => activeColumns?.at(-1)?.at(-1) ?? blocks.at(-1)
@@ -377,6 +386,16 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
         finishColumns(index)
         continue
       }
+      const groupDirective = parseGroupDirective(comment)
+      if (groupDirective === 'start') {
+        groupCount += 1
+        activeGroup = `group-${groupCount}`
+        continue
+      }
+      if (groupDirective === 'end') {
+        activeGroup = null
+        continue
+      }
       const directive = parseDirective(comment)
       if (directive) directives = { ...directives, ...directive }
       else if (comment && !isMarpDirective(comment)) {
@@ -408,6 +427,7 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
       }
       if (referencesDepth !== null && block.type === 'list') block.semanticRole = 'reference'
       if (block.visibility !== 'hidden') {
+        if (activeGroup) block.groupId = activeGroup
         if (activeCodeGroup && block.type === 'code') activeCodeGroup.push(block)
         else if (activeColumns) activeColumns[activeColumns.length - 1].push(block)
         else blocks.push(block)
@@ -419,29 +439,15 @@ export function parsePresentationDocument(markdown: string): PresentationBlock[]
   finishColumns((tree.children ?? []).length)
   finishCodeGroup((tree.children ?? []).length)
 
-  // Images default to the presentation-friendly legend composition: image on
-  // the left and its nearby explanatory copy on the right. Keep that small
-  // semantic group together so pagination never strands the legend.
+  // Images default to the presentation-friendly legend composition. Text that
+  // must share the figure's scene is designated explicitly with
+  // `present: group` markers — there is no implicit neighbor gluing.
   let figureCount = 0
-  blocks.forEach((block, index) => {
+  blocks.forEach((block) => {
     if (block.type !== 'figure') return
     figureCount += 1
     block.figureNumber = figureCount
     block.layoutHint = block.imageOptions?.layout === 'hero' ? 'hero' : block.imageOptions?.layout === 'auto' ? 'auto' : 'legend'
-    if (block.layoutHint !== 'legend') return
-    const previous = blocks[index - 1]
-    if (previous?.type === 'paragraph') {
-      previous.keepWithNext = true
-      block.keepWithPrevious = true
-    }
-    let previousInGroup: PresentationBlock = block
-    for (let nextIndex = index + 1; nextIndex < Math.min(blocks.length, index + 4); nextIndex += 1) {
-      const next = blocks[nextIndex]
-      if (next.type !== 'paragraph') break
-      previousInGroup.keepWithNext = true
-      next.keepWithPrevious = true
-      previousInGroup = next
-    }
   })
 
   return blocks

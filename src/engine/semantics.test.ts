@@ -74,16 +74,31 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(figure?.imageOptions?.width).toBe('520px')
   })
 
-  it('glues a figure to the prose around it so pagination cannot strand a legend', () => {
+  it('binds present: group content into one pagination group', () => {
+    // design v3: same-scene text is designated explicitly with begin/end
+    // markers; the old previous+next-3 auto-glue heuristic is gone.
+    const blocks = parsePresentationDocument(
+      'Intro before.\n\n<!-- present: group -->\n![chart](fig.png){size=40%} 圖說\n\n重點段落一\n\n重點段落二\n<!-- present: end-group -->\n\n自由段落。\n',
+    )
+    const figureIndex = blocks.findIndex((block) => block.type === 'figure')
+
+    expect(blocks[figureIndex].groupId).toBeDefined()
+    expect(blocks[figureIndex + 1].groupId).toBe(blocks[figureIndex].groupId)
+    expect(blocks[figureIndex + 2].groupId).toBe(blocks[figureIndex].groupId)
+    expect(blocks[0].groupId).toBeUndefined()
+    expect(blocks.at(-1)?.groupId).toBeUndefined()
+  })
+
+  it('no longer glues neighbors to a figure implicitly', () => {
     const blocks = parsePresentationDocument(
       'Lead-in prose.\n\n![Figure](f.png)\n\nExplanatory copy.\n',
     )
     const figureIndex = blocks.findIndex((block) => block.type === 'figure')
 
-    expect(blocks[figureIndex - 1].keepWithNext).toBe(true)
-    expect(blocks[figureIndex].keepWithPrevious).toBe(true)
-    expect(blocks[figureIndex].keepWithNext).toBe(true)
-    expect(blocks[figureIndex + 1].keepWithPrevious).toBe(true)
+    expect(blocks[figureIndex - 1].keepWithNext).toBe(false)
+    expect(blocks[figureIndex].keepWithPrevious).toBe(false)
+    expect(blocks[figureIndex].keepWithNext).toBe(false)
+    expect(blocks[figureIndex + 1].keepWithPrevious).toBe(false)
   })
 
   it('keeps a quote atomic and treats it as a statement', () => {

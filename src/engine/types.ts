@@ -73,6 +73,7 @@ export interface PresentationBlock {
   alt?: string
   imageOptions?: import('../imageSyntax').MarpitImageOptions
   figureNumber?: number
+  groupId?: string
   caption?: InlineNode[]
   value?: string
   language?: string

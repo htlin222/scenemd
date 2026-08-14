@@ -252,7 +252,7 @@ function makeScene(
     fillRatio,
     score,
     scores,
-    warning: undefined,
+    warning: fillRatio > 1 ? 'Content exceeds this scene. Shrink the figure size, shorten the text, or split the group.' : undefined,
     continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
   }
@@ -310,11 +310,22 @@ export function planScenes(
       continue
     }
 
+    // A scene boundary must never fall inside a `present: group`; advancing
+    // the window end past the whole group keeps groups atomic even when they
+    // are longer than the lookahead.
+    const pastGroup = (end: number): number => {
+      while (
+        end < plannedBlocks.length
+        && plannedBlocks[end - 1].groupId
+        && plannedBlocks[end].groupId === plannedBlocks[end - 1].groupId
+      ) end += 1
+      return end
+    }
+
     let cursor = 0
     while (cursor < plannedBlocks.length) {
       const candidates: Array<ReturnType<typeof evaluate> & { blocks: PresentationBlock[]; end: number; used: number }> = []
-      const limit = Math.min(plannedBlocks.length, cursor + 8)
-      for (let end = cursor + 1; end <= limit; end += 1) {
+      for (let end = pastGroup(cursor + 1); end <= plannedBlocks.length && candidates.length < 8; end = pastGroup(end + 1)) {
         const candidateBlocks = plannedBlocks.slice(cursor, end)
         const used = usedHeight(candidateBlocks, measurements, viewportHeight)
         candidates.push({

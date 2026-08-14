@@ -22,11 +22,13 @@ const viewport = {
 
 const DOC = `## Renal function
 
+<!-- present: group -->
 ![GFR chart](https://img.test/fig.png){size=45%} 圖一：腎絲球過濾率隨年齡下降
 
 A normal paragraph added below the figure should stay on this scene together.
 
 A second short paragraph also belongs to this same section of the document.
+<!-- present: end-group -->
 `
 
 const config = defaultPresentationConfig('Pipeline harness')

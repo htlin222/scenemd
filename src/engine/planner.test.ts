@@ -38,9 +38,9 @@ const plannedBlockIds = (scenes: { blocks: PresentationBlock[] }[]) =>
 describe('planScenes — sized figures', () => {
   it('computes a sized figure from the viewport and keeps the following paragraph on its scene', () => {
     // design v2: `size=NN%` figures are pure arithmetic — a stale or absurd DOM
-    // measurement must not strand the glued paragraph onto the next scene.
+    // measurement must not strand the grouped paragraph onto the next scene.
     const { blocks, regions } = regionsFrom(
-      '## Renal function\n\n![chart](fig.png){size=45%} 圖一：說明\n\nA paragraph below the figure.\n',
+      '## Renal function\n\n<!-- present: group -->\n![chart](fig.png){size=45%} 圖一：說明\n\nA paragraph below the figure.\n<!-- present: end-group -->\n',
     )
     const shortViewport = 430
     const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : block.type === 'heading' ? 76 : 60))
@@ -48,6 +48,31 @@ describe('planScenes — sized figures', () => {
 
     expect(plan.scenes).toHaveLength(1)
     expect(plannedBlockIds(plan.scenes)).toEqual(allBlockIds(blocks))
+  })
+})
+
+describe('planScenes — explicit groups', () => {
+  const GROUPED = '<!-- present: group -->\n![chart](fig.png){size=45%} 圖說\n\n重點一\n\n重點二\n<!-- present: end-group -->\n\n自由段落甲。\n\n自由段落乙。\n'
+
+  it('never splits a present: group across scenes', () => {
+    const { blocks, regions } = regionsFrom(GROUPED)
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 150))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+    const groupScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'figure'))
+
+    expect(groupScene?.blocks.map((block) => block.type)).toEqual(['figure', 'paragraph', 'paragraph'])
+  })
+
+  it('keeps an overflowing group whole and flags the scene', () => {
+    const { blocks, regions } = regionsFrom(GROUPED)
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 330))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+    const groupScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'figure'))
+
+    expect(groupScene?.blocks).toHaveLength(3)
+    expect(groupScene?.fillRatio).toBeGreaterThan(1)
+    expect(groupScene?.warning).toBeTruthy()
+    expect(plan.overflowCount).toBeGreaterThan(0)
   })
 })
 
@@ -104,13 +129,14 @@ describe('planScenes — fit test', () => {
 
 describe('planScenes — invariants from spec.md', () => {
   it('never separates a figure from the prose bound to it', () => {
-    // spec critical invariant: "split image-caption pairs = 0"
+    // spec critical invariant: "split image-caption pairs = 0". Since design
+    // v3, prose is bound to a figure explicitly via present: group markers.
     const markdown = [
       '## Section',
       ...Array.from({ length: 4 }, (_, i) => `Filler ${i}.`),
-      'Lead-in prose.',
+      '<!-- present: group -->\n\nLead-in prose.',
       '![Figure](f.png)',
-      'Explanatory copy.',
+      'Explanatory copy.\n\n<!-- present: end-group -->',
     ].join('\n\n')
     const { blocks, regions } = regionsFrom(`${markdown}\n`)
     const plan = planScenes(regions, measure(blocks, 150), VIEWPORT, 'balanced')

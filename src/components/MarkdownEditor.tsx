@@ -279,6 +279,8 @@ const PRESENTATION_HINTS = [
   { label: '<!-- present: hide -->', detail: 'Hide the next block in presentation' },
   { label: '<!-- present: only -->', detail: 'Show the next block only in presentation' },
   { label: '<!-- present: step -->', detail: 'Reveal the next list item by item' },
+  { label: '<!-- present: group -->', detail: 'Start a group that stays on one scene' },
+  { label: '<!-- present: end-group -->', detail: 'End the same-scene group' },
   { label: '<!-- present: columns -->', detail: 'Start responsive semantic columns' },
   { label: '<!-- present: column -->', detail: 'Start another column' },
   { label: '<!-- present: end-columns -->', detail: 'End semantic columns' },

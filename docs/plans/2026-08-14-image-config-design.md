@@ -103,6 +103,22 @@ occupies; everything else stays semantic.**
 2. Fig. N auto numbering.
 3. Full-screen dialog; popover removal; e2e migration.
 
+## v3 — the figure is the scene's first-class citizen (2026-08-14)
+
+Author's principle: on every slide the image is the largest first-class
+citizen; text arranges itself around it, and some text is *designated* as
+must-share-the-scene.
+
+- **Explicit same-scene groups** replace the previous+next-3 auto-glue
+  heuristic: `<!-- present: group -->` … `<!-- present: end-group -->` wraps
+  the figure and its designated text (mirrors the `present: columns` marker
+  family). Enclosed blocks share a `groupId`.
+- **The planner never places a scene boundary inside a group.** When a group
+  alone exceeds capacity, the scene keeps everything, gets `fillRatio > 1`,
+  and carries a warning — the figure is never shrunk and the bound text is
+  never evicted; that state is an authoring error surfaced to the author.
+- Ungrouped text flows freely across scenes (text yields, as before).
+
 ### Superseded v1 follow-up
 
 The earlier pagination note is folded into stage 1: with `size`, the planner
