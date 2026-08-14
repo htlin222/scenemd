@@ -349,7 +349,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
           // under the image (design v5).
           <div className={`figure-grid${aboveProse.length ? '' : ' is-figure-only'}`}>
             <div className="figure-col">
-              {renderBlocks(visibleFigures)}
+              <div className="figure-frame-area">{renderBlocks(visibleFigures)}</div>
               {!!belowProse.length && <div className="figure-below-caption">{renderBlocks(belowProse)}</div>}
             </div>
             {!!aboveProse.length && <div className="figure-text-col" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>{renderBlocks(aboveProse)}</div>}

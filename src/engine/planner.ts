@@ -179,9 +179,12 @@ function figureColumns(blocks: PresentationBlock[], measurements: Map<string, nu
   const belowProse = prose.filter((block) => blocks.indexOf(block) > firstFigureIndex)
   const belowHeight = belowProse.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
     + Math.max(0, belowProse.length - 1) * 12
+  // The legend space is mandated by the layout; `size` distributes only what
+  // remains after it, so size=100% always fits exactly and never overflows.
+  const frameArea = Math.max(80, available - belowHeight)
   const frames = figures.reduce((total, block) => {
     const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
-    return total + (sized ? (available * Number(sized[1])) / 100 : blockHeight(block, measurements, sceneBudget))
+    return total + (sized ? (frameArea * Number(sized[1])) / 100 : blockHeight(block, measurements, sceneBudget))
   }, 0)
   const nonFrame = figures.length * FIGURE_CAPTION_ALLOWANCE + Math.max(0, figures.length - 1) * 12 + belowHeight
   const aboveHeight = aboveProse.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
@@ -351,7 +354,12 @@ export function planScenes(
     const plannedBlocks = region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements))
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
     const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
-    if (regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
+    // A figure region IS the page the author delimited with `---` or a
+    // heading: it always becomes exactly one scene. Above-text shrinks to
+    // fit and a genuine overflow carries the warning — the scoring window
+    // never gets to slice a figure page apart (design v5).
+    if (plannedBlocks.some((block) => block.type === 'figure')
+      || regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
       const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
       scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity)))
       continue

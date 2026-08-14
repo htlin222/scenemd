@@ -22,12 +22,13 @@ const viewport = {
 
 // The author's canonical figure-page pattern (design v5): `---` cuts pages;
 // inside a figure page, prose above the image is body copy and prose below it
-// is the legend.
-const DOC = `## Renal function
+// is the legend. `?size=` overrides the figure size and `?heading=0` drops
+// the H2 so specs can compare both variants.
+const figureSize = Number(params.get('size') || 45)
+const withHeading = params.get('heading') !== '0'
+const DOC = `${withHeading ? '## Renal function\n\n' : ''}腎功能隨年齡下降，本頁說明其臨床意義與判讀重點。
 
-腎功能隨年齡下降，本頁說明其臨床意義與判讀重點。
-
-![GFR chart](https://img.test/fig.png){size=45%}
+![GFR chart](https://img.test/fig.png){size=${figureSize}%}
 
 圖一：腎絲球過濾率隨年齡下降（資料來源：NHANES 系列研究）。
 `

@@ -321,6 +321,9 @@
 .figure-grid { flex: 1; display: grid; grid-template-columns: fit-content(100%) minmax(0, 1fr); gap: 3cqw; align-items: stretch; min-width: 0; min-height: 0; }
 .figure-grid.is-figure-only { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 .figure-col { display: flex; flex-direction: column; justify-content: center; gap: 1cqw; min-width: 0; min-height: 0; }
+/* The legend below is mandated space; the frame area is what remains, and
+   size=NN% resolves against it — so 100% always fits exactly. */
+.figure-frame-area { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
 .figure-col .block-figure { height: 100%; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
 .figure-col .figure-frame { width: auto; height: var(--figure-height, 60%); max-height: 100%; min-height: calc(var(--figure-height, 60%) * 0.75); flex: 0 1 auto; aspect-ratio: auto; background: transparent; }
 .figure-col .figure-frame img { width: auto; height: 100%; max-width: 100%; margin: 0 auto; object-fit: contain; }

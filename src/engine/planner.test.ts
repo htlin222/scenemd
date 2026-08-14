@@ -52,7 +52,8 @@ describe('planScenes — sized figures', () => {
 })
 
 describe('planScenes — explicit groups', () => {
-  const GROUPED = '<!-- present: group -->\n![chart](fig.png){size=45%} 圖說\n\n重點一\n\n重點二\n<!-- present: end-group -->\n\n自由段落甲。\n\n自由段落乙。\n'
+  // `---` cuts the figure page off from the free paragraphs (design v5).
+  const GROUPED = '<!-- present: group -->\n![chart](fig.png){size=45%} 圖說\n\n重點一\n\n重點二\n<!-- present: end-group -->\n\n---\n\n自由段落甲。\n\n自由段落乙。\n'
 
   it('never splits a present: group across scenes', () => {
     const { blocks, regions } = regionsFrom(GROUPED)

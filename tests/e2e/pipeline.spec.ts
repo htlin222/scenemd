@@ -32,6 +32,34 @@ test('a figure page keeps its structure: body above, figure, legend below', asyn
   await expect(page.locator('[data-testid="scene-0"] .figure-text-col')).not.toContainText('圖一')
 })
 
+test('with an H2, a size=100% figure stays below the heading', async ({ page }) => {
+  await page.goto('/tests/harness/pipeline/?width=640&size=100')
+  await page.getByTestId('plan-json').waitFor()
+  const plan = JSON.parse(await page.getByTestId('plan-json').innerText()) as PlanJson
+  expect(plan.scenes).toHaveLength(1)
+
+  const heading = await page.locator('[data-testid="scene-0"] .scene-heading').boundingBox()
+  const frame = await page.locator('[data-testid="scene-0"] .figure-frame').boundingBox()
+  const caption = await page.locator('[data-testid="scene-0"] .figure-below-caption').boundingBox()
+  // The figure's maximum extent is the height remaining under the H2: the
+  // frame starts below the heading and still leaves room for the legend.
+  expect(frame!.y).toBeGreaterThanOrEqual(heading!.y + heading!.height - 1)
+  expect(caption!.y).toBeGreaterThanOrEqual(frame!.y + frame!.height - 1)
+})
+
+test('without the H2 the figure gets the extra height', async ({ page }) => {
+  await page.goto('/tests/harness/pipeline/?width=640&size=100')
+  await page.getByTestId('plan-json').waitFor()
+  const withHeading = await page.locator('[data-testid="scene-0"] .figure-frame').boundingBox()
+
+  await page.goto('/tests/harness/pipeline/?width=640&size=100&heading=0')
+  await page.getByTestId('plan-json').waitFor()
+  await expect(page.locator('[data-testid="scene-0"] .scene-heading')).toHaveCount(0)
+  const withoutHeading = await page.locator('[data-testid="scene-0"] .figure-frame').boundingBox()
+
+  expect(withoutHeading!.height).toBeGreaterThan(withHeading!.height + 10)
+})
+
 test('the rendered figure honors size as a fraction of the figure column', async ({ page }) => {
   const frame = await page.locator('[data-testid="scene-0"] .figure-frame').boundingBox()
   const column = await page.locator('[data-testid="scene-0"] .figure-col .block-figure').boundingBox()
