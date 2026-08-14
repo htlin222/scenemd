@@ -241,7 +241,7 @@ function makeBlocks(node: MdNode, index: number): PresentationBlock[] {
       // never caption text (docs/plans/2026-08-14-image-config-design.md).
       const children = node.children ?? []
       const sibling = children[children.indexOf(image) + 1]
-      const attributeMatch = sibling?.type === 'text' ? sibling.value.match(/^\{([^}\n]*)\}/) : null
+      const attributeMatch = sibling?.type === 'text' ? (sibling.value ?? '').match(/^\{([^}\n]*)\}/) : null
       block.imageOptions = parseImageAttributes(image.alt ?? '', attributeMatch ? attributeMatch[1] : null)
       block.alt = block.imageOptions.alt || 'Presentation figure'
       const remaining = children
