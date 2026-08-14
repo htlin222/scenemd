@@ -56,6 +56,7 @@ import {
 import { formatMarpitImageAlt, imageFilterCss, parseMarpitImageAlt, type MarpitImageOptions } from '../imageSyntax'
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
 import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
+import { minimalDocChange } from '../lib/minimalChange'
 
 export type EditorMode = 'write' | 'split' | 'preview'
 
@@ -964,8 +965,11 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
   useEffect(() => {
     const view = viewRef.current
     if (!view) return
-    const current = view.state.doc.toString()
-    if (current !== value) view.dispatch({ changes: { from: 0, to: current.length, insert: value } })
+    // Replace only the differing span. A whole-document replacement maps the
+    // cursor to offset 0, which scrolls the editor to the top and rebuilds
+    // every image preview widget.
+    const change = minimalDocChange(view.state.doc.toString(), value)
+    if (change) view.dispatch({ changes: change })
   }, [value])
 
   useEffect(() => {
