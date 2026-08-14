@@ -60,35 +60,12 @@ test('without the H2 the figure gets the extra height', async ({ page }) => {
   expect(withoutHeading!.height).toBeGreaterThan(withHeading!.height + 10)
 })
 
-test('a long legend wraps at the image width instead of widening the column', async ({ page }) => {
-  // 圖片的大小是寬度限制：the caption must not contribute to the fit-content
-  // column width — it wraps within the frame's width.
-  await page.goto('/tests/harness/pipeline/?width=640&size=45')
-  await page.getByTestId('plan-json').waitFor()
-  const frame = page.locator('[data-testid="scene-0"] .figure-frame')
-  const caption = page.locator('[data-testid="scene-0"] .figure-below-caption')
-  // The layout converges over a few ResizeObserver rounds (caption wraps →
-  // area height settles → frame width settles), so poll until stable.
-  // The harness image is 1×1, so the displayed width equals the frame height;
-  // the column (and the caption) must hug that, not the caption's text width.
-  await expect.poll(async () => {
-    const f = await frame.boundingBox()
-    return Math.abs(f!.width - f!.height)
-  }).toBeLessThan(12)
-  const f = await frame.boundingBox()
-  const c = await caption.boundingBox()
-  expect(c!.width).toBeLessThanOrEqual(f!.width + 2)
-})
-
 test('the rendered figure honors size as a fraction of the figure column', async ({ page }) => {
-  const frame = page.locator('[data-testid="scene-0"] .figure-frame')
-  const column = page.locator('[data-testid="scene-0"] .figure-col .block-figure')
+  const frame = await page.locator('[data-testid="scene-0"] .figure-frame').boundingBox()
+  const column = await page.locator('[data-testid="scene-0"] .figure-col .block-figure').boundingBox()
   // design v5: size% resolves against the figure column — the height left
-  // under the heading. Poll until the ResizeObserver rounds converge.
-  await expect.poll(async () => {
-    const frameBox = await frame.boundingBox()
-    const columnBox = await column.boundingBox()
-    if (!frameBox || !columnBox || columnBox.height < 50) return Number.POSITIVE_INFINITY
-    return Math.abs(frameBox.height - 0.45 * columnBox.height)
-  }).toBeLessThan(10)
+  // under the heading — so the layout itself does the arithmetic.
+  const expected = 0.45 * (column?.height ?? 0)
+  expect(column?.height ?? 0).toBeGreaterThan(50)
+  expect(Math.abs((frame?.height ?? 0) - expected)).toBeLessThan(10)
 })

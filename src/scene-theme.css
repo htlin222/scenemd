@@ -318,18 +318,13 @@
    figure left / text right. The figure column height is exactly the space
    under the heading, so `size=NN%` on the frame resolves against it and the
    frame flex-shrinks to leave room for the caption at 100%. */
-.figure-grid { flex: 1; display: grid; grid-template-columns: minmax(0, var(--figure-col-width, 45%)) minmax(0, 1fr); gap: 3cqw; align-items: stretch; min-width: 0; min-height: 0; }
+.figure-grid { flex: 1; display: grid; grid-template-columns: fit-content(100%) minmax(0, 1fr); gap: 3cqw; align-items: stretch; min-width: 0; min-height: 0; }
 .figure-grid.is-figure-only { grid-template-columns: minmax(0, 1fr); justify-items: center; }
 .figure-col { display: flex; flex-direction: column; justify-content: center; gap: 1cqw; min-width: 0; min-height: 0; }
 /* The legend below is mandated space; the frame area is what remains, and
    size=NN% resolves against it — so 100% always fits exactly. */
-.figure-frame-area { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 0; min-width: 0; }
-.figure-col .block-figure { height: 100%; max-width: 100%; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
-/* The image is the width constraint: captions contribute zero intrinsic width
-   (width:0 + min-width:100%) so the column hugs the frame, and long legends
-   wrap inside the image's width instead of stretching the parent. */
-.figure-col figcaption,
-.figure-below-caption { contain: inline-size; overflow-wrap: break-word; }
+.figure-frame-area { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
+.figure-col .block-figure { height: 100%; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
 .figure-col .figure-frame { width: auto; height: var(--figure-height, 60%); max-height: 100%; min-height: calc(var(--figure-height, 60%) * 0.75); flex: 0 1 auto; aspect-ratio: auto; background: transparent; }
 .figure-col .figure-frame img { width: auto; height: 100%; max-width: 100%; margin: 0 auto; object-fit: contain; }
 .figure-col figcaption { flex: 0 0 auto; }
@@ -442,6 +437,7 @@
 
 @container (max-width: 760px) {
   .block-columns { grid-template-columns: 1fr; gap: 1.8cqw; }
+  .figure-grid { grid-template-columns: 1fr; gap: 2cqw; }
 }
 
 /* Fullscreen text never falls below the requested 20px floor. Preview text
