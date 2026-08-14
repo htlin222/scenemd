@@ -137,6 +137,20 @@ Known non-goals for now: mapping `.slide: data-background` onto SceneMD
 background figures, and emitting imsize on save (SceneMD always writes the
 hybrid attribute block).
 
+### Marp downward compatibility
+
+Marp is the easiest of the three — the image syntax descends from Marpit
+and the legacy read path already covers it:
+
+| Marp input | SceneMD behavior |
+| --- | --- |
+| `![w:480](…)`, `![bg left:33%](…)` alt tokens | Already read via the legacy Marpit parser (the hybrid migration path). |
+| `---` separators, frontmatter (`marp: true`, `theme:` …) | Same handling as the HackMD clauses above. |
+| Comment directives incl. `_class:`-style spot directives, `transition:`, `headingDivider:` | Recognized against the full Marp directive list and ignored — previously the underscored and newer names leaked into speaker notes. |
+| Plain HTML comments | Speaker notes — Marp and SceneMD agree on this convention natively. |
+| Multiple `![bg]` images in one paragraph | Not supported (multi-image paragraphs are plain paragraphs); accepted limitation. |
+| SceneMD → Marp | `{…}` blocks are literal text on slides; `present:` comments land in Marp's presenter notes (Marp's own convention for unknown comments). |
+
 ### Superseded v1 follow-up
 
 The earlier pagination note is folded into stage 1: with `size`, the planner

@@ -149,7 +149,9 @@ function parseColumnsDirective(value: string): 'start' | 'next' | 'end' | null {
 }
 
 function isMarpDirective(value: string): boolean {
-  return /^\s*(?:theme|paginate|header|footer|style|class|color|backgroundcolor|backgroundimage|backgroundposition|backgroundrepeat|backgroundsize)\s*:/i.test(value)
+  // Marp global and local directives, with the optional `_` spot-directive
+  // prefix. Anything matching is engine config for Marp, never a speaker note.
+  return /^\s*_?(?:marp|theme|paginate|header|footer|style|class|color|size|math|transition|headingdivider|title|author|description|keywords|url|image|backgroundcolor|backgroundimage|backgroundposition|backgroundrepeat|backgroundsize)\s*:/i.test(value)
 }
 
 function columnsBlock(columns: PresentationBlock[][], index: number): PresentationBlock | null {

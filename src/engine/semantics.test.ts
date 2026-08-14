@@ -104,6 +104,16 @@ describe('parsePresentationDocument — semantic normalization', () => {
     expect(JSON.stringify(figure?.caption ?? [])).toContain('圖一：胸腔電腦斷層')
   })
 
+  it('ignores Marp directives, including underscored spot directives, instead of noting them', () => {
+    // compat: Marp decks carry `_class:`/`transition:`-style comment
+    // directives; only genuine prose comments become speaker notes.
+    const blocks = parsePresentationDocument(
+      '# Title\n\n<!-- _class: lead -->\n<!-- transition: fade -->\n<!-- headingDivider: 2 -->\n<!-- marp: true -->\n<!-- 這才是真的講者備註 -->\n\nBody.\n',
+    )
+    const heading = find(blocks, 'heading')
+    expect(heading?.speakerNotes).toEqual(['這才是真的講者備註'])
+  })
+
   it('normalizes an image and its caption into one atomic figure', () => {
     // spec: "Image and caption normalize into one atomic figure."
     const blocks = parsePresentationDocument('![w:520px Bone marrow](marrow.jpg)\n')
