@@ -1034,3 +1034,10 @@ body { background: var(--surface); }
 .citation-import-dialog > header small,
 .bibliography-dialog > header small,
 .export-dialog > header small { font-size: 11px; }
+
+/* Conflict recovery (#12) */
+.save-conflict-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 12px 0 4px; text-align: left; }
+.save-conflict-diff > div { min-width: 0; }
+.save-conflict-diff span { display: block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.7; margin-bottom: 4px; }
+.save-conflict-diff pre { margin: 0; max-height: 130px; overflow: auto; padding: 8px; border-radius: 8px; background: color-mix(in srgb, currentColor 7%, transparent); font-size: 12px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.conflict-backup-toast button { flex-shrink: 0; }
