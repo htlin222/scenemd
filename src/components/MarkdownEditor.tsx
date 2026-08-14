@@ -57,6 +57,7 @@ import { formatMarpitImageAlt, imageFilterCss, parseMarpitImageAlt, type MarpitI
 import { OpenEvidenceImportDialog } from './OpenEvidenceImportDialog'
 import { aggregateMarkdownReferences, normalizeMarkdownUrls } from '../lib/openevidence'
 import { minimalDocChange } from '../lib/minimalChange'
+import { imageParagraphReplacement, readImageLegend } from '../lib/legendText'
 
 export type EditorMode = 'write' | 'split' | 'preview'
 
@@ -214,6 +215,8 @@ interface ImageToolState {
   url: string
   originalUrl: string
   options: MarpitImageOptions
+  legend: string
+  legendEditable: boolean
   left: number
   top: number
 }
@@ -764,17 +767,18 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     setSelectionTool(null)
   }
 
-  const updateImageDraft = (patch: Partial<MarpitImageOptions> & { url?: string }) => {
+  const updateImageDraft = (patch: Partial<MarpitImageOptions> & { url?: string; legend?: string }) => {
     setImageTool((current) => {
       if (!current) return current
-      const nextOptions = { ...current.options, ...patch }
+      const { url: _patchUrl, legend: _patchLegend, ...optionPatch } = patch
+      const nextOptions = { ...current.options, ...optionPatch }
       if (nextOptions.fit === 'cover') nextOptions.fit = 'contain'
       if (patch.layout === 'legend') {
         nextOptions.background = false
         nextOptions.side = 'none'
       }
       if (patch.background === true) nextOptions.layout = 'auto'
-      const next = { ...current, url: patch.url ?? current.url, options: nextOptions }
+      const next = { ...current, url: patch.url ?? current.url, legend: patch.legend ?? current.legend, options: nextOptions }
       imageToolRef.current = next
       return next
     })
@@ -810,9 +814,12 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
       to = nearest.to
     }
     const syntax = `![${formatMarpitImageAlt(current.options)}](${current.url.trim()})`
+    const change = current.legendEditable
+      ? imageParagraphReplacement(source, from, to, syntax, current.legend)
+      : { from, to, insert: syntax }
     view.dispatch({
-      changes: { from, to, insert: syntax },
-      selection: { anchor: from + syntax.length },
+      changes: change,
+      selection: { anchor: change.from + change.insert.length },
     })
     closeImageTool()
     view.focus()
@@ -881,7 +888,8 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
           } else if (imageMatch) {
             setSelectionTool(null)
             setAiError(null)
-            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseMarpitImageAlt(imageMatch.alt), left: position.left, top: position.imageTop }
+            const legendContext = readImageLegend(measureView.state.doc.toString(), imageMatch.from, imageMatch.to)
+            const nextImageTool = { ...imageMatch, originalUrl: imageMatch.url, options: parseMarpitImageAlt(imageMatch.alt), legend: legendContext.legend, legendEditable: legendContext.editable, left: position.left, top: position.imageTop }
             imageToolRef.current = nextImageTool
             setImageTool(nextImageTool)
           } else {
@@ -1092,6 +1100,7 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
         <div className="image-syntax-fields">
           <label className="image-field-wide"><span>Image URL</span><input value={imageTool.url} onChange={(event) => updateImageDraft({ url: event.target.value })} /></label>
           <label className="image-field-wide"><span>Alt text</span><input value={imageTool.options.alt} onChange={(event) => updateImageDraft({ alt: event.target.value })} placeholder="Describe this image" /></label>
+          <label className="image-field-wide"><span>Legend text</span><textarea rows={2} value={imageTool.legend} disabled={!imageTool.legendEditable} onChange={(event) => updateImageDraft({ legend: event.target.value })} placeholder="Text shown beside the figure" title={imageTool.legendEditable ? 'Saved into the same paragraph as the image' : 'This image shares its paragraph with other content, so the legend cannot be edited here'} /></label>
           <label><span>Width</span><input value={imageTool.options.width} onChange={(event) => updateImageDraft({ width: event.target.value })} placeholder="e.g. 480px" /></label>
           <label><span>Height</span><input value={imageTool.options.height} onChange={(event) => updateImageDraft({ height: event.target.value })} placeholder="e.g. 280px" /></label>
           <label><span>Scaling</span><select value={imageTool.options.fit} onChange={(event) => updateImageDraft({ fit: event.target.value as MarpitImageOptions['fit'] })}><option value="contain">Fit · no crop</option><option value="auto">Natural size</option></select></label>

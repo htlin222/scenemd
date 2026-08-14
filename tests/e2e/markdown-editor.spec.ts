@@ -39,6 +39,24 @@ test('clicking inside image syntax opens the popover', async ({ page }) => {
   await expect(page.locator('.image-syntax-popover')).toContainText('Marpit syntax')
 })
 
+test('the popover reads and rewrites the same-paragraph legend', async ({ page }) => {
+  await page.locator('.cm-line', { hasText: '![Second figure]' }).click({ position: { x: 40, y: 16 } })
+  const popover = page.locator('.image-syntax-popover')
+  await expect(popover).toBeVisible()
+
+  const legendField = popover.getByLabel('Legend text')
+  await expect(legendField).toHaveValue('')
+  await legendField.fill('圖二：新的 legend 文字')
+  await popover.getByRole('button', { name: 'Save' }).click()
+  await expect(page.locator('.cm-content')).toContainText(
+    '![Second figure](https://img.test/two.png) 圖二：新的 legend 文字',
+  )
+
+  // Reopening the popover reads the saved legend back.
+  await page.locator('.cm-line', { hasText: '![Second figure]' }).click({ position: { x: 40, y: 16 } })
+  await expect(popover.getByLabel('Legend text')).toHaveValue('圖二：新的 legend 文字')
+})
+
 test('an external value update keeps the cursor where it was', async ({ page }) => {
   await page.locator('.cm-line', { hasText: 'Legend two explains' }).click()
   await expect(page.locator('.markdown-statusbar')).toContainText('Ln 11,')

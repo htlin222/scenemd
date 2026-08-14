@@ -277,6 +277,9 @@ body.is-resizing-notes * { cursor: row-resize !important; user-select: none !imp
 .image-syntax-fields .image-field-wide { grid-column: 1 / -1; }
 .image-syntax-fields input, .image-syntax-fields select { min-width: 0; width: 100%; height: 34px; padding: 0 9px; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; outline: 0; background: var(--surface); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .image-syntax-fields input:focus, .image-syntax-fields select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.image-syntax-fields textarea { min-width: 0; width: 100%; padding: 7px 9px; color: var(--ink); border: 1px solid var(--line); border-radius: 4px; outline: 0; background: var(--surface); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
+.image-syntax-fields textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.image-syntax-fields textarea:disabled { color: var(--muted); background: var(--surface-muted); resize: none; }
 .image-syntax-fields .image-field-check { align-content: end; grid-template-columns: auto 1fr; align-items: center; padding-bottom: 8px; text-transform: none; letter-spacing: 0; font-size: 12px; }
 .image-syntax-fields .image-field-check input { width: 16px; height: 16px; accent-color: var(--accent); }
 .image-syntax-actions { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end; gap: 8px; padding: 11px 14px; border-top: 1px solid var(--line); background: color-mix(in srgb, var(--surface-raised) 96%, transparent); backdrop-filter: blur(12px); }
