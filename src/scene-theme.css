@@ -9,6 +9,12 @@
  */
 
 .scene {
+  /* Content insets — single source; the figure-bg bleed negates these, so
+     every variant (e.g. has-citations) must override the variable, not
+     .scene-content directly. */
+  --scene-inset-top: 4.688cqw;
+  --scene-inset-x: 5.729cqw;
+  --scene-inset-bottom: 5.5cqw;
   --template-teal: #3d6869;
   --template-text: #111;
   /* AA: 4.78:1 on #fff (was #999 at 2.85:1) */
@@ -123,14 +129,14 @@
 .scene-content {
   position: absolute;
   z-index: 2;
-  inset: 4.688cqw 5.729cqw 5.5cqw;
+  inset: var(--scene-inset-top) var(--scene-inset-x) var(--scene-inset-bottom);
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   min-width: 0;
   min-height: 0;
 }
-.scene.has-citations .scene-content { bottom: 10cqw; }
+.scene.has-citations { --scene-inset-bottom: 10cqw; }
 .scene-citations {
   position: absolute;
   z-index: 20;
@@ -335,31 +341,34 @@
 .figure-col figcaption { flex: 0 0 auto; width: var(--figure-width, auto); max-width: 100%; margin-right: auto; margin-left: auto; overflow-wrap: break-word; }
 .figure-below-caption { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0.4cqw; padding-top: 0.7cqw; border-top: 1px solid var(--template-line); width: var(--figure-width, auto); max-width: 100%; margin: 0 auto; overflow-wrap: break-word; }
 .figure-below-caption p { margin: 0; color: var(--template-muted); font-size: 1.35cqw; line-height: 1.35; }
-.figure-text-col { display: flex; flex-direction: column; justify-content: center; gap: 1.05cqw; min-width: 0; min-height: 0; }
-.figure-text-col > p { margin: 0; }
+.figure-text-col,
+.figure-bg-text { display: flex; flex-direction: column; justify-content: center; gap: 1.05cqw; min-width: 0; min-height: 0; }
+.figure-text-col > p,
+.figure-bg-text > p { margin: 0; }
 /* Above-figure prose shrinks to fit rather than spilling to the next scene;
    the planner computes the scale (floor 0.6) and passes it per scene. */
 .figure-text-col p,
-.figure-text-col li { font-size: calc(2.083cqw * var(--figure-text-scale, 1)); }
-.figure-caption-number { margin-right: 0.6em; color: var(--template-teal); font-weight: 700; letter-spacing: 0.03em; }
-
-/* design v5.1: `{bg}` — the figure bleeds to the scene's right and bottom
-   edges at the full height remaining under the heading. Width follows the
-   image's aspect ratio (never cropped), capped so the text column keeps at
-   least ~38% of the scene. The negative margins undo .scene-content's right
-   and bottom insets; the bottom chrome (z-30) and progress bar (z-25) sit
-   above the content layer (z-2), so the image passes beneath them. */
-.figure-bg-grid { flex: 1; display: flex; align-items: stretch; gap: 3cqw; min-width: 0; min-height: 0; }
-.figure-bg-text { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 1.05cqw; }
-.figure-bg-text > p { margin: 0; }
+.figure-text-col li,
 .figure-bg-text p,
 .figure-bg-text li { font-size: calc(2.083cqw * var(--figure-text-scale, 1)); }
+.figure-caption-number { margin-right: 0.6em; color: var(--template-teal); font-weight: 700; letter-spacing: 0.03em; }
+
+/* design v5.1: `{bg}` — the figure spans the full content height (its top
+   edge sits right under the chrome strip, "頂到 menu") and bleeds to the
+   scene's right and bottom edges. The heading lives in the left column with
+   the rest of the text. Width follows the image's aspect ratio (never
+   cropped), capped so the text column keeps at least ~38% of the scene. The
+   negative margins undo .scene-content's right and bottom insets; the bottom
+   chrome (z-30) and progress bar (z-25) sit above the content layer (z-2),
+   so the image passes beneath them. */
+.figure-bg-grid { flex: 1; display: flex; align-items: stretch; gap: 3cqw; min-width: 0; min-height: 0; }
+.figure-bg-left { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.figure-bg-text { flex: 1 1 auto; }
 .figure-bg-text .figure-bg-caption { margin-top: 0.7cqw; padding-top: 0.7cqw; border-top: 1px solid var(--template-line); color: var(--template-muted); font-size: calc(1.35cqw * var(--figure-text-scale, 1)); line-height: 1.35; }
-.figure-bg-panel { flex: 0 1 auto; min-width: 0; max-width: 62cqw; margin: 0 -5.729cqw -5.5cqw 0; }
+.figure-bg-panel { flex: 0 1 auto; min-width: 0; max-width: 62cqw; margin: 0 calc(-1 * var(--scene-inset-x)) calc(-1 * var(--scene-inset-bottom)) 0; }
 .figure-bg-panel .block-figure { height: 100%; margin: 0; display: flex; flex-direction: column; }
 .figure-bg-panel .figure-frame { flex: 1 1 auto; width: auto; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; overflow: visible; border-radius: 0; background: transparent; }
 .figure-bg-panel .figure-frame img { display: block; width: auto; height: 100%; max-width: 100%; margin-left: auto; object-fit: contain; object-position: right center; }
-.figure-bg-panel figcaption { display: none; }
 .scene figure { margin: 0; }
 .figure-frame { position: relative; width: 100%; height: var(--figure-height, auto); max-height: 32cqw; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 0; background: #f1f2f1; }
 .figure-frame::after { content: none; }

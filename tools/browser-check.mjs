@@ -202,10 +202,17 @@ await evaluate(`[...document.querySelectorAll('.markdown-mode-button')].find((bu
 await waitForPage(`Boolean(document.querySelector('.markdown-document-scroll .markdown-document h1'))`, 'the split-mode rendered Markdown')
 
 // ── Clipboard image upload to R2 ─────────────────────────────────────────────
-const pasteDispatched = await evaluate(`(() => {
-  const binary = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-  const file = new File([bytes], 'clipboard-image.png', { type: 'image/png' })
+// Portrait (200×800) rather than square: the bg bleed layout sizes the panel
+// from the image's aspect ratio, and a square would hide ratio mistakes.
+const pasteDispatched = await evaluate(`(async () => {
+  const canvas = document.createElement('canvas')
+  canvas.width = 200
+  canvas.height = 800
+  const context = canvas.getContext('2d')
+  context.fillStyle = '#33475b'
+  context.fillRect(0, 0, 200, 800)
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+  const file = new File([blob], 'clipboard-image.png', { type: 'image/png' })
   const transfer = new DataTransfer()
   transfer.items.add(file)
   return document.querySelector('.cm-content')?.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer })) === false
@@ -261,7 +268,6 @@ if (!preview.scenes || preview.scaledPreviewFontSize < 11 || !preview.overflow?.
 // image really reaches the scene's right and bottom edges (design v5.1: the
 // panel undoes .scene-content's insets) and the prose stayed in the left column.
 let bgGeometry = null
-const visitedLayouts = []
 const sceneDotCount = await evaluate(`document.querySelectorAll('.scene-dots button').length`)
 for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
   await evaluate(`document.querySelectorAll('.scene-dots button')[${index}]?.click()`)
@@ -271,24 +277,35 @@ for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
     if (!scene) return null
     const image = scene.querySelector('.figure-bg-panel img')
     const text = scene.querySelector('.figure-bg-text p')
+    const heading = scene.querySelector('.figure-bg-left .scene-heading')
     if (!image || !text) return { missing: true }
     const sceneRect = scene.getBoundingClientRect()
     const imageRect = image.getBoundingClientRect()
     const textRect = text.getBoundingClientRect()
+    // object-fit: contain can letterbox inside the element box, so measure the
+    // painted image, not just the <img> box.
+    const paintedScale = Math.min(imageRect.width / image.naturalWidth, imageRect.height / image.naturalHeight)
+    const paintedHeight = image.naturalHeight * paintedScale
     return {
       rightGap: sceneRect.right - imageRect.right,
       bottomGap: sceneRect.bottom - imageRect.bottom,
+      paintedShortfall: imageRect.height - paintedHeight,
+      // full height: the image's top must reach the heading's top edge, not
+      // start below the heading (design v5.1: heading lives in the left column)
+      topAlignedWithHeading: !heading || imageRect.top <= heading.getBoundingClientRect().top + 2,
       textLeftOfImage: textRect.right <= imageRect.left,
       hasLegend: Boolean(scene.querySelector('.figure-bg-caption')),
     }
   })()`)
-  visitedLayouts.push(await evaluate(`[...document.querySelectorAll('.scene[data-layout]')].map((scene) => scene.dataset.layout + ':' + [...scene.querySelectorAll('figure')].map((figure) => figure.dataset.background ?? 'no-bg').join(',')).join('+')`))
 }
 if (!bgGeometry || bgGeometry.missing) {
-  const imageLines = await evaluate(`[...document.querySelectorAll('.cm-line')].map((line) => line.textContent).filter((text) => text.includes('![')).join(' | ')`)
-  throw new Error(`figure-bg scene not found or incomplete: ${JSON.stringify(bgGeometry)} visited=${JSON.stringify(visitedLayouts)} imageLines=${JSON.stringify(imageLines)}`)
+  const debugState = await evaluate(`JSON.stringify({
+    layouts: [...document.querySelectorAll('.scene[data-layout]')].map((scene) => scene.dataset.layout),
+    imageLines: [...document.querySelectorAll('.cm-line')].map((line) => line.textContent).filter((text) => text.includes('![')),
+  })`)
+  throw new Error(`figure-bg scene not found or incomplete: ${JSON.stringify(bgGeometry)} ${debugState}`)
 }
-if (Math.abs(bgGeometry.rightGap) > 3 || Math.abs(bgGeometry.bottomGap) > 3 || !bgGeometry.textLeftOfImage || !bgGeometry.hasLegend) {
+if (Math.abs(bgGeometry.rightGap) > 3 || Math.abs(bgGeometry.bottomGap) > 3 || bgGeometry.paintedShortfall > 3 || !bgGeometry.topAlignedWithHeading || !bgGeometry.textLeftOfImage || !bgGeometry.hasLegend) {
   throw new Error(`figure-bg bleed geometry failed: ${JSON.stringify(bgGeometry)}`)
 }
 const bgShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })

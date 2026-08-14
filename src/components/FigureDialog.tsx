@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Image, LoaderCircle, Upload, X } from 'lucide-react'
-import { type MarpitImageOptions } from '../imageSyntax'
+import { clampSizePercent, type MarpitImageOptions } from '../imageSyntax'
 import { SceneView } from './SceneView'
 import { chooseLayout } from '../engine/planner'
 import { buildSemanticRegions, parsePresentationDocument } from '../engine/semantics'
@@ -28,7 +28,7 @@ interface FigureDialogProps {
 
 function sizePercent(options: MarpitImageOptions): number {
   const match = options.size.match(/^(\d+(?:\.\d+)?)%$/)
-  return match ? Math.min(100, Math.max(15, Number(match[1]))) : 55
+  return match ? clampSizePercent(Number(match[1])) : 55
 }
 
 const DIALOG_CONFIG = defaultPresentationConfig('Figure preview')
@@ -148,7 +148,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
     const startY = event.clientY
     const startSize = size
     const onMove = (moveEvent: PointerEvent) => {
-      const next = Math.min(100, Math.max(15, startSize + ((moveEvent.clientY - startY) / canvasHeight) * 100))
+      const next = clampSizePercent(startSize + ((moveEvent.clientY - startY) / canvasHeight) * 100)
       onChange({ size: `${Math.round(next)}%` })
     }
     const onEnd = () => {

@@ -13,7 +13,7 @@
 | 決策點 | 結論 |
 | --- | --- |
 | 寬度模型 | 比例決定寬度、**不裁切**:圖滿高、寬 = 高 × 原始比例、貼右緣出血 |
-| heading | 保持全寬(現有 scene-heading 位置);圖只吃 heading 以下的高度 |
+| heading | **進左欄**(2026-08-15 修訂:原定全寬,實測後不夠滿——「頂到 menu」);圖從 content 頂緣(chrome 條下方)直通頁底 |
 | 圖說 | 進左欄(正文下方),沿用 `figure-below-caption`;右側面板無文字 |
 | 語法 | `{bg}` flag,與 `{size=NN%}` 互斥;Marpit `![bg …]` 讀入正規化為 `{bg}` |
 | 順手修 | `size` parse/dialog 一律 clamp 15–100%(修 >100% 的半壞行為) |
@@ -23,11 +23,13 @@
 新增 scene layout **`figure-bg`**,`chooseLayout` 在 scene 內任一 figure 帶
 `background` 時選中,優先於 `figure`。
 
-- Scene 結構:breadcrumb / section-nav / heading 照舊全寬。heading 以下分兩塊:
-  左欄(正文 + 圖說)、右側出血面板。
-- 出血面板:從 heading 下緣延伸到 scene 的**右緣與底緣**(忽略 scene 的右、下
-  padding,以負 margin 或絕對定位實現)。圖片 `height: 100%`、`width: auto`、
-  `object-fit: contain`、貼右對齊,不裁切。
+- Scene 結構:breadcrumb / section-nav 照舊。content 區分兩塊:左欄
+  (heading + 正文 + 圖說)、右側出血面板。
+- 出血面板:從 content 頂緣(chrome 條正下方,「頂到 menu」)延伸到 scene 的
+  **右緣與底緣**(以負 margin 抵銷 `.scene-content` 的 inset 變數)。圖片
+  `height: 100%`、`width: auto`、`object-fit: contain`、貼右對齊,不裁切。
+- planner 數學不因 heading 進左欄而變:heading 高度無論欄內欄外,對垂直預算
+  的貢獻相同(`usedHeight = headingTotal + effectiveText`)。
 - 寬度守門:面板 `max-width: 62%`(scene 寬)。橫式寬圖撞到上限時等比縮小
   (此時不再滿高)——「不裁切」原則下唯一的讓步,保證左欄至少 ~38% 寬。
 - 底部 chrome(頁碼、進度條)照常疊在最上層,圖從底下穿過。

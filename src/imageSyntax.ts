@@ -18,6 +18,13 @@ export interface MarpitImageOptions {
 
 const FILTER_PATTERN = /^(?:blur|brightness|contrast|drop-shadow|grayscale|hue-rotate|invert|opacity|saturate|sepia)(?::\S+)?$/i
 const LENGTH_PATTERN = /^(?:auto|\d*\.?\d+(?:px|cm|mm|in|pt|pc|em|rem|%)?)$/i
+const SIZE_PATTERN = /^\d+(?:\.\d+)?%$/
+
+// The single 15–100 clamp behind every size entry point: parse, write, and
+// the dialog's drag handle.
+export function clampSizePercent(value: number): number {
+  return Math.min(100, Math.max(15, value))
+}
 
 export function parseMarpitImageAlt(source: string): MarpitImageOptions {
   const options: MarpitImageOptions = {
@@ -151,7 +158,7 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
     else if (key === 'fit' && ['contain', 'auto'].includes(value)) options.fit = value as ImageFit
     else if (key === 'side' && ['left', 'right'].includes(value)) options.side = value as ImageSide
     else if (key === 'split' && /^\d+(?:\.\d+)?%$/.test(value)) options.splitSize = value
-    else if (key === 'size' && /^\d+(?:\.\d+)?%$/.test(value)) options.size = clampSize(value)
+    else if (key === 'size' && SIZE_PATTERN.test(value)) options.size = clampSize(value)
     else if (key === 'filter') options.filters = value.trim()
   }
   if (!sawFigAlt && QUARTO_MARKER.test(attributes)) options.alt = ''
@@ -164,8 +171,7 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
 // >100% can never reach the planner/renderer (where it half-breaks: CSS
 // min-height overrides max-height and the frame overflows the scene).
 function clampSize(value: string): string {
-  const percent = Math.min(100, Math.max(15, Number(value.slice(0, -1))))
-  return `${percent}%`
+  return `${clampSizePercent(Number(value.slice(0, -1)))}%`
 }
 
 // The write vocabulary is deliberately minimal (design v5.1): a figure is
@@ -177,7 +183,7 @@ export function formatImageAttributes(options: MarpitImageOptions): string {
   if (options.background) return '{bg}'
   // The dialog feeds free-text straight into options.size — validate and
   // clamp here so a typo can never be written into the document.
-  return /^\d+(?:\.\d+)?%$/.test(options.size) ? `{size=${clampSize(options.size)}}` : ''
+  return SIZE_PATTERN.test(options.size) ? `{size=${clampSize(options.size)}}` : ''
 }
 
 export function imageFilterCss(filters: string): string | undefined {

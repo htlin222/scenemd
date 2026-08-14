@@ -7,6 +7,18 @@ interface BlockViewProps {
   block: PresentationBlock
   revealIndex?: number
   measurement?: boolean
+  // figure-bg renders the caption in the left text column instead
+  hideCaption?: boolean
+}
+
+// Single source for a figure's caption line: the Fig. number prefix and the
+// caption-with-alt-fallback, shared by the in-figure figcaption and the
+// figure-bg left-column caption.
+function FigureCaption({ block }: { block: PresentationBlock }) {
+  return <>
+    {block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}
+    <InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} />
+  </>
 }
 
 function InlineContent({ nodes = [] }: { nodes?: InlineNode[] }) {
@@ -179,7 +191,7 @@ function CodeGroup({ block, revealIndex, measurement }: { block: PresentationBlo
   </div>
 }
 
-export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measurement = false }: BlockViewProps) {
+export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measurement = false, hideCaption = false }: BlockViewProps) {
   const common = {
     className: `content-block block-${block.type}${block.continuation ? ' is-continuation' : ''}`,
     'data-block-id': block.id,
@@ -228,8 +240,8 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
           <img src={block.url} alt={block.alt ?? ''} style={imageStyle} />
           <span className="figure-index" aria-hidden="true">{block.figureNumber ? `FIG. ${block.figureNumber}` : 'FIG.'}</span>
         </div>
-        {(block.caption?.length || block.alt) && (
-          <figcaption>{block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}<InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} /></figcaption>
+        {!hideCaption && (block.caption?.length || block.alt) && (
+          <figcaption><FigureCaption block={block} /></figcaption>
         )}
       </figure>
     )
@@ -380,23 +392,26 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
       {scene.breadcrumb && <div className="scene-breadcrumb">{scene.breadcrumb}</div>}
       <div className="scene-content">
         {scene.continuationLabel && <div className="continuation-label">{scene.continuationLabel}</div>}
-        {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
+        {heading && scene.layout !== 'figure-bg' && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
         {scene.layout === 'figure-bg' ? (
-          // design v5.1: the bg figure bleeds to the right and bottom edges at
-          // full remaining height; every piece of text — body copy, legend
-          // paragraphs, and the figures' own captions — lives in the left column.
+          // design v5.1: the bg figure spans the full content height — top edge
+          // right under the chrome strip — and bleeds to the right and bottom
+          // edges. Everything textual (heading, body copy, legend paragraphs,
+          // and the figures' own captions) lives in the left column.
           <div className="figure-bg-grid">
-            <div className="figure-bg-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
-              {renderBlocks(prose)}
-              {visibleFigures.filter((block) => block.caption?.length || block.alt).map((block) => (
-                <p className="figure-bg-caption" key={`${block.id}-caption`}>
-                  {block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}
-                  <InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} />
-                </p>
-              ))}
+            <div className="figure-bg-left">
+              {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
+              <div className="figure-bg-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
+                {renderBlocks(prose)}
+                {visibleFigures.filter((block) => block.caption?.length || block.alt).map((block) => (
+                  <p className="figure-bg-caption" key={`${block.id}-caption`}><FigureCaption block={block} /></p>
+                ))}
+              </div>
             </div>
-            <div className="figure-bg-panel">{renderBlocks(visibleFigures)}</div>
+            <div className="figure-bg-panel">
+              {visibleFigures.map((block) => <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} hideCaption />)}
+            </div>
           </div>
         ) : scene.layout === 'figure' ? (
           // Position decides the text's role: paragraphs above the figure are
