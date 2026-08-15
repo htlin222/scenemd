@@ -85,3 +85,76 @@ test('the rendered figure honors size as a fraction of the figure column', async
   expect(column?.height ?? 0).toBeGreaterThan(50)
   expect(Math.abs((frame?.height ?? 0) - expected)).toBeLessThan(10)
 })
+
+// The multi-figure specs use a wider stage: the default 640px harness gives a
+// 360px-tall scene, too short for two rows of figures, so the planner would
+// (correctly) break them across scenes before the grid could be observed.
+const GRID_STAGE = '/tests/harness/pipeline/?width=1280&size=80'
+const gridScene = (page: import('@playwright/test').Page) =>
+  page.locator('article:has(.figure-gallery)').first()
+
+test('two figures render side by side with the body text above them', async ({ page }) => {
+  await page.goto(`${GRID_STAGE}&figures=2`)
+  await page.getByTestId('plan-json').waitFor()
+
+  const scene = gridScene(page)
+  await expect(scene.locator('.figure-cell')).toHaveCount(2)
+  await expect(scene.locator('.figure-col')).toHaveCount(0)
+
+  const text = await scene.locator('.figure-gallery-text').boundingBox()
+  const [left, right] = await scene.locator('.figure-cell').all()
+  const leftBox = await left.boundingBox()
+  const rightBox = await right.boundingBox()
+
+  // Side by side: same row, different columns.
+  expect(Math.abs(leftBox!.y - rightBox!.y)).toBeLessThan(2)
+  expect(rightBox!.x).toBeGreaterThan(leftBox!.x + leftBox!.width - 1)
+  // Body text sits above the grid and spans the full width.
+  expect(leftBox!.y).toBeGreaterThanOrEqual(text!.y + text!.height - 1)
+  expect(text!.width).toBeGreaterThan(leftBox!.width * 1.8)
+})
+
+test('each cell keeps its own legend', async ({ page }) => {
+  await page.goto(`${GRID_STAGE}&figures=2`)
+  await page.getByTestId('plan-json').waitFor()
+
+  const cells = gridScene(page).locator('.figure-cell')
+  await expect(cells.nth(0).locator('.figure-below-caption')).toContainText('第 1 組')
+  await expect(cells.nth(1).locator('.figure-below-caption')).toContainText('第 2 組')
+  await expect(cells.nth(0).locator('.figure-below-caption')).not.toContainText('第 2 組')
+})
+
+const cellBoxes = async (page: import('@playwright/test').Page) => {
+  const cells = await gridScene(page).locator('.figure-cell').all()
+  return Promise.all(cells.map((cell) => cell.boundingBox()))
+}
+const distinct = (values: number[]) => [...new Set(values.map((value) => Math.round(value / 5)))]
+
+test('three figures share one row', async ({ page }) => {
+  await page.goto(`${GRID_STAGE}&figures=3`)
+  await page.getByTestId('plan-json').waitFor()
+
+  const boxes = await cellBoxes(page)
+  expect(boxes).toHaveLength(3)
+  expect(distinct(boxes.map((box) => box!.y))).toHaveLength(1)
+  expect(distinct(boxes.map((box) => box!.x))).toHaveLength(3)
+})
+
+test('four figures fall into a 2 x 2 quadrant', async ({ page }) => {
+  await page.goto(`${GRID_STAGE}&figures=4`)
+  await page.getByTestId('plan-json').waitFor()
+
+  const boxes = await cellBoxes(page)
+  expect(boxes).toHaveLength(4)
+  expect(distinct(boxes.map((box) => box!.y))).toHaveLength(2)
+  expect(distinct(boxes.map((box) => box!.x))).toHaveLength(2)
+})
+
+test('a lone figure keeps the v5 figure-left layout', async ({ page }) => {
+  // Regression fence for the single-figure path.
+  await page.goto('/tests/harness/pipeline/?width=640&size=45')
+  await page.getByTestId('plan-json').waitFor()
+
+  await expect(page.locator('[data-testid="scene-0"] .figure-col')).toHaveCount(1)
+  await expect(page.locator('[data-testid="scene-0"] .figure-gallery')).toHaveCount(0)
+})

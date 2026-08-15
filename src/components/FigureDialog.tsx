@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Check, Image, LoaderCircle, Upload, X } from 'lucide-react'
 import { type MarpitImageOptions } from '../imageSyntax'
 import { SceneView } from './SceneView'
-import { chooseLayout } from '../engine/planner'
+import { chooseLayout, figureGridColumns } from '../engine/planner'
 import { buildSemanticRegions, parsePresentationDocument } from '../engine/semantics'
 import { defaultPresentationConfig } from '../presentationConfig'
 import type { PresentationBlock, Scene } from '../engine/types'
@@ -87,6 +87,7 @@ function contextScene(state: FigureDialogState): { scene: Scene; targetId: strin
       endBlockId: sceneBlocks[sceneBlocks.length - 1].id,
       blocks: sceneBlocks,
       layout: chooseLayout(sceneBlocks),
+      figureColumns: figureGridColumns(sceneBlocks),
       sourceRange: sceneBlocks[0].sourceRange,
       fillRatio: 0,
       score: 0,

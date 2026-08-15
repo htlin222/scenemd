@@ -5,6 +5,11 @@ import '@fontsource/source-sans-3/latin-600.css'
 import '@fontsource/source-sans-3/latin-700.css'
 import 'katex/dist/katex.min.css'
 import '../../src/styles.css'
+// The figure dialog renders a real <SceneView> preview, so the harness needs
+// the scene theme too. Without it the preview is unstyled — .scene-content
+// falls back to display:block and the image overflows the 16:9 stage, which
+// makes every geometry assertion against the dialog meaningless.
+import '../../src/scene-theme.css'
 import { MarkdownEditor, type EditorMode } from '../../src/components/MarkdownEditor'
 
 // The e2e specs assert on these exact line numbers; keep them in sync with
