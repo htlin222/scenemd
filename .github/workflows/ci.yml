@@ -23,6 +23,33 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # ~190MB Chromium download; the suite itself runs in about 11s. Cached
+      # across runs by the key below, so only a Playwright bump pays full price.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
+      - run: npx playwright install --with-deps chromium
+      # Rendered geometry — column layout, frame heights, caption widths — is
+      # invisible to the node-environment vitest suite, so nothing else in CI
+      # can catch a figure-layout regression.
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+
   smoke:
     runs-on: ubuntu-latest
     steps:
