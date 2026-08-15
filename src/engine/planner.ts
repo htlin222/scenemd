@@ -160,6 +160,13 @@ const MIN_FRAME_SHRINK = 0.75
 // Above-figure prose may shrink to fit the scene ("縮小文字，總之塞就對了"),
 // down to this floor — below it the scene overflows visibly instead.
 const MIN_TEXT_SCALE = 0.6
+// Gap between the body-text row and the figure grid, and between grid rows.
+// They mirror the `gap` values in .figure-gallery / .figure-gallery-grid.
+const FIGURE_GRID_GAP = 20
+const FIGURE_ROW_GAP = 18
+// A frame below this is not a figure, it is a smudge; the grid stops shrinking
+// here and lets the scene break instead.
+const MIN_FRAME_HEIGHT = 110
 
 export interface FigureCell {
   figure: PresentationBlock
@@ -243,8 +250,89 @@ function figureColumns(blocks: PresentationBlock[], measurements: Map<string, nu
   return { headingTotal, available, frames, nonFrame, aboveHeight }
 }
 
+interface FigureGridMetrics {
+  columns: number
+  textRow: number
+  used: number
+}
+
+// Two or more figures share a grid instead of stacking: the body text is a
+// full-width row and the figures sit under it, so the scene's height is a sum
+// where the single-figure layout takes a max (they are side by side there).
+function figureGridMetrics(
+  blocks: PresentationBlock[],
+  measurements: Map<string, number>,
+  sceneBudget: number,
+  textScale: number,
+): FigureGridMetrics {
+  const { bodyText, cells } = figureCells(blocks)
+  const { rows, columns } = figureGridShape(cells.length)
+  const headings = blocks.filter((block) => block.type === 'heading')
+  const headingTotal = headings.length
+    ? headings.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+      + Math.max(0, headings.length - 1) * 20 + 20
+    : 0
+  const available = Math.max(120, sceneBudget - headingTotal)
+  const textRow = bodyText.length
+    ? (bodyText.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+      + (bodyText.length - 1) * 12) * textScale
+    : 0
+  const textGap = bodyText.length ? FIGURE_GRID_GAP : 0
+  const gridSpace = Math.max(MIN_FRAME_HEIGHT, available - textRow - textGap)
+  const rowSlot = (gridSpace - (rows - 1) * FIGURE_ROW_GAP) / rows
+
+  let gridNeeded = Math.max(0, rows - 1) * FIGURE_ROW_GAP
+  for (let row = 0; row < rows; row += 1) {
+    const rowCells = cells.slice(row * columns, row * columns + columns)
+    // Legends are measured at the full scene width but render at 1/columns of
+    // it, and .figure-below-caption is sized in cqw — relative to the scene,
+    // not the column — so narrowing the column multiplies the line count
+    // instead of shrinking the type. Without this the planner under-counts
+    // legends and they spill out of their cells.
+    const legendHeight = Math.max(0, ...rowCells.map((cell) =>
+      cell.legend.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0) * columns))
+    const chrome = FIGURE_CAPTION_ALLOWANCE + legendHeight
+    const frameSlot = Math.max(MIN_FRAME_HEIGHT, rowSlot - chrome)
+    const frame = Math.max(0, ...rowCells.map((cell) => {
+      const sized = cell.figure.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
+      // The floor is on the frame, not the slot: a frame that has shrunk past
+      // it is a smudge, so the grid keeps claiming MIN_FRAME_HEIGHT and the
+      // body text yields instead (or the scene breaks). Unsized figures were
+      // measured against .measurement-root's fixed frame, so they may claim
+      // more than their cell — clamp them to it.
+      return sized
+        ? Math.max(MIN_FRAME_HEIGHT, (frameSlot * Number(sized[1])) / 100)
+        : Math.min(blockHeight(cell.figure, measurements, sceneBudget), frameSlot)
+    }))
+    gridNeeded += frame + chrome
+  }
+  return { columns, textRow, used: headingTotal + textRow + textGap + gridNeeded }
+}
+
+// Body text shrinks (floor 0.6) before the grid gives ground, matching the
+// single-figure rule. One corrective pass only: shrinking the text also frees
+// grid space, so the result is a conservative over-estimate — the safe
+// direction for a fit test.
+function figureGridPlan(
+  blocks: PresentationBlock[],
+  measurements: Map<string, number>,
+  sceneBudget: number,
+): { metrics: FigureGridMetrics; textScale?: number } {
+  const first = figureGridMetrics(blocks, measurements, sceneBudget, 1)
+  if (first.used <= sceneBudget || first.textRow <= 0) return { metrics: first }
+  const surplus = first.used - sceneBudget
+  const textScale = Math.max(MIN_TEXT_SCALE, Math.round(((first.textRow - surplus) / first.textRow) * 100) / 100)
+  return { metrics: figureGridMetrics(blocks, measurements, sceneBudget, textScale), textScale }
+}
+
+export function figureGridColumns(blocks: PresentationBlock[]): number | undefined {
+  const count = figureCells(blocks).cells.length
+  return count > 1 ? figureGridShape(count).columns : undefined
+}
+
 export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number | undefined {
   if (chooseLayout(blocks) !== 'figure') return undefined
+  if (figureCells(blocks).cells.length > 1) return figureGridPlan(blocks, measurements, sceneBudget).textScale
   const { available, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
   if (aboveHeight <= available) return undefined
   return Math.max(MIN_TEXT_SCALE, Math.round((available / aboveHeight) * 100) / 100)
@@ -252,6 +340,18 @@ export function figureTextScale(blocks: PresentationBlock[], measurements: Map<s
 
 function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number {
   if (chooseLayout(blocks) === 'figure') {
+    const figureCount = figureCells(blocks).cells.length
+    if (figureCount > 1) {
+      const { used } = figureGridPlan(blocks, measurements, sceneBudget).metrics
+      // Sized figures always shrink into whatever space is left, so the
+      // arithmetic alone would happily accept a dozen figures on one scene.
+      // Past the cap the cost grows beyond the budget and the existing
+      // candidate filter (and overflow warning, for a forced `present: group`)
+      // does the rest.
+      return figureCount > MAX_FIGURES_PER_SCENE
+        ? used + sceneBudget * (figureCount - MAX_FIGURES_PER_SCENE)
+        : used
+    }
     const { headingTotal, available, frames, nonFrame, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
     const columnNeeded = frames + nonFrame
     const columnMinimum = frames * MIN_FRAME_SHRINK + nonFrame
@@ -362,6 +462,9 @@ function makeScene(
     scores,
     warning,
     figureTextScale: textScale,
+    // Derived here rather than at the two call sites: makeScene already has
+    // the blocks, and one derivation cannot drift from the other.
+    figureColumns: figureGridColumns(blocks),
     continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
   }

@@ -166,6 +166,78 @@ describe('planScenes — above-figure text shrinks to fit', () => {
   })
 })
 
+describe('planScenes — multi-figure grid', () => {
+  const sizedFigures = (count: number) =>
+    Array.from({ length: count }, (_, index) => `![f${index}](f${index}.png){size=80%}`).join('\n\n')
+
+  it('fits two sized figures on one scene without an overflow warning', () => {
+    const { blocks, regions } = regionsFrom(
+      '## 對照\n\n本頁比較治療前後。\n\n![a](a.png){size=80%}\n\n圖一：治療前。\n\n![b](b.png){size=80%}\n\n圖二：治療後。\n',
+    )
+    const measurements = measure(blocks, (block) => (block.type === 'heading' ? 76 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure')
+    expect(plan.scenes[0].figureColumns).toBe(2)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('leaves a single figure on the v5 layout with no column count', () => {
+    // Regression fence: one figure must behave exactly as before.
+    const { blocks, regions } = regionsFrom('## 標題\n\n內文。\n\n![a](a.png){size=80%}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'heading' ? 76 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    expect(plan.scenes[0].figureColumns).toBeUndefined()
+  })
+
+  it.each([2, 3, 4, 5, 6])('packs %i figures onto one scene', (count) => {
+    // Sized figures share the grid rather than stacking, so up to the cap they
+    // all fit on the page the author wrote them on.
+    const { blocks, regions } = regionsFrom(sizedFigures(count))
+    const plan = planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].blocks.filter((block) => block.type === 'figure')).toHaveLength(count)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('costs a second row of figures more than a second column', () => {
+    // Four figures need two rows, three need one — the height model must
+    // reflect that or the planner cannot tell the two apart.
+    const fillFor = (count: number) => {
+      const { blocks, regions } = regionsFrom(sizedFigures(count))
+      return planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced').scenes[0].fillRatio
+    }
+
+    expect(fillFor(4)).toBeGreaterThan(fillFor(3))
+  })
+
+  it('breaks a run of seven figures rather than shrinking them further', () => {
+    const { blocks, regions } = regionsFrom(sizedFigures(7))
+    const plan = planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced')
+
+    expect(plan.scenes.length).toBeGreaterThan(1)
+    for (const scene of plan.scenes) {
+      expect(scene.blocks.filter((block) => block.type === 'figure').length).toBeLessThanOrEqual(6)
+    }
+  })
+
+  it('shrinks the body-text row before giving up on a two-figure page', () => {
+    const { blocks, regions } = regionsFrom(
+      '<!-- present: group -->\n大量內文段落。\n\n![a](a.png){size=70%}\n\n![b](b.png){size=70%}\n<!-- present: end-group -->\n',
+    )
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' ? 700 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
+  })
+})
+
 describe('planScenes — fit test', () => {
   it('emits one scene for a region that fits comfortably', () => {
     // spec: "Comfortable regions become scenes directly."
