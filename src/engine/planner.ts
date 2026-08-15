@@ -161,6 +161,50 @@ const MIN_FRAME_SHRINK = 0.75
 // down to this floor — below it the scene overflows visibly instead.
 const MIN_TEXT_SCALE = 0.6
 
+export interface FigureCell {
+  figure: PresentationBlock
+  legend: PresentationBlock[]
+}
+
+export interface FigureComposition {
+  bodyText: PresentationBlock[]
+  cells: FigureCell[]
+}
+
+// Position decides the role (design v5, extended for multi-figure grids):
+// everything before the first figure is body copy, and the consecutive
+// non-heading blocks immediately after a figure are that figure's legend.
+// The planner's height model and SceneView both read this — deriving it twice
+// is how the two drift apart.
+export function figureCells(blocks: PresentationBlock[]): FigureComposition {
+  const bodyText: PresentationBlock[] = []
+  const cells: FigureCell[] = []
+  for (const block of blocks) {
+    if (block.type === 'heading') continue
+    if (block.type === 'figure') {
+      cells.push({ figure: block, legend: [] })
+      continue
+    }
+    if (cells.length) cells[cells.length - 1].legend.push(block)
+    else bodyText.push(block)
+  }
+  return { bodyText, cells }
+}
+
+// Three columns is the cap: on a 16:9 stage a fourth column turns figures into
+// postage stamps. Rows are balanced rather than greedily filled so four
+// figures read as a 2 × 2 quadrant instead of a 3 + 1 orphan.
+const MAX_FIGURE_COLUMNS = 3
+// A seventh figure would need a third row of stamps; the planner breaks the
+// scene instead (see usedHeight).
+export const MAX_FIGURES_PER_SCENE = 6
+
+export function figureGridShape(count: number): { rows: number; columns: number } {
+  if (count <= 1) return { rows: count, columns: count }
+  const rows = Math.ceil(count / MAX_FIGURE_COLUMNS)
+  return { rows, columns: Math.ceil(count / rows) }
+}
+
 interface FigureColumns {
   headingTotal: number
   available: number

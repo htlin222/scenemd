@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { buildSemanticRegions, parsePresentationDocument } from './semantics'
-import { chooseLayout, planScenes, withPresentationCover } from './planner'
+import { chooseLayout, figureCells, figureGridShape, planScenes, withPresentationCover } from './planner'
 import { defaultPresentationConfig } from '../presentationConfig'
 import type { PresentationBlock, SemanticRegion } from './types'
 
@@ -34,6 +34,53 @@ const plannedBlockIds = (scenes: { blocks: PresentationBlock[] }[]) =>
     .map((block) => block.id.replace(/-part-\d+$/, ''))
     .filter((id, index, list) => list.indexOf(id) === index)
     .sort()
+
+describe('figureCells — legend ownership', () => {
+  it('treats everything before the first figure as body text', () => {
+    const { blocks } = regionsFrom('## Title\n\n開場說明。\n\n![a](a.png)\n')
+    const { bodyText, cells } = figureCells(blocks)
+
+    expect(bodyText.map((block) => block.type)).toEqual(['paragraph'])
+    expect(cells).toHaveLength(1)
+    expect(cells[0].legend).toEqual([])
+  })
+
+  it('gives each figure the paragraphs that immediately follow it', () => {
+    // Position decides the role: the run of prose after a figure is that
+    // figure's legend, and the next figure ends the run.
+    const { blocks } = regionsFrom('內文。\n\n![a](a.png)\n\n左圖說明。\n\n![b](b.png)\n\n右圖說明。\n')
+    const { bodyText, cells } = figureCells(blocks)
+
+    expect(bodyText).toHaveLength(1)
+    expect(cells).toHaveLength(2)
+    expect(cells[0].legend).toHaveLength(1)
+    expect(cells[0].legend[0].inlines?.[0]).toMatchObject({ value: '左圖說明。' })
+    expect(cells[1].legend[0].inlines?.[0]).toMatchObject({ value: '右圖說明。' })
+  })
+
+  it('ignores headings and reports no cells for a figureless scene', () => {
+    const { blocks } = regionsFrom('## Title\n\n只有文字。\n')
+    const { bodyText, cells } = figureCells(blocks)
+
+    expect(cells).toEqual([])
+    expect(bodyText.map((block) => block.type)).toEqual(['paragraph'])
+  })
+})
+
+describe('figureGridShape — balanced grid, three columns max', () => {
+  it.each([
+    [1, { rows: 1, columns: 1 }],
+    [2, { rows: 1, columns: 2 }],
+    [3, { rows: 1, columns: 3 }],
+    // Four is a quadrant, not a 3 + 1 orphan — that is what balancing buys.
+    [4, { rows: 2, columns: 2 }],
+    [5, { rows: 2, columns: 3 }],
+    [6, { rows: 2, columns: 3 }],
+    [7, { rows: 3, columns: 3 }],
+  ])('lays %i figures out as %o', (count, expected) => {
+    expect(figureGridShape(count)).toEqual(expected)
+  })
+})
 
 describe('planScenes — sized figures', () => {
   it('computes a sized figure from the viewport and keeps the following paragraph on its scene', () => {
