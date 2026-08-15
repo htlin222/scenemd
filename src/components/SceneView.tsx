@@ -313,7 +313,9 @@ function DebugCard({ scene }: { scene: Scene }) {
     <aside className="debug-card" aria-label="Planner score breakdown">
       <div className="debug-title"><span>Planner trace</span><strong>{scene.score}</strong></div>
       {rows.map(([label, value]) => <div className="debug-row" key={label}><span>{label}</span><span>{value}</span></div>)}
-      <div className="debug-source">L{scene.sourceRange.startLine}–{scene.sourceRange.endLine} · {scene.layout}</div>
+      {/* `figure` covers two structurally different height models; without the
+          column count there is no way to tell from the trace which one ran. */}
+      <div className="debug-source">L{scene.sourceRange.startLine}–{scene.sourceRange.endLine} · {scene.layout}{scene.figureColumns ? ` grid ×${scene.figureColumns}` : ''}</div>
     </aside>
   )
 }

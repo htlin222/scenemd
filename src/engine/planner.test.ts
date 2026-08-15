@@ -226,6 +226,27 @@ describe('planScenes — multi-figure grid', () => {
     }
   })
 
+  it('says what actually went wrong when a group pins more than six figures', () => {
+    // The cap is not a height overflow. Folding it into usedHeight made the
+    // warning quote a fabricated percentage ("overflows by 84%") for a grid
+    // whose real height fits.
+    const { blocks, regions } = regionsFrom(`<!-- present: group -->\n${sizedFigures(7)}\n<!-- present: end-group -->\n`)
+    const scene = planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced').scenes[0]
+
+    expect(scene.blocks.filter((block) => block.type === 'figure')).toHaveLength(7)
+    expect(scene.warning).toBe('A scene holds at most 6 figures; this one is pinned to 7')
+    expect(scene.fillRatio).toBeLessThanOrEqual(1)
+  })
+
+  it('never reports an overflow of zero percent', () => {
+    // Math.round on a hairline overflow produced "Content overflows this
+    // scene by 0%", which reads as a bug report about nothing.
+    const { blocks, regions } = regionsFrom('<!-- present: group -->\n段落一。\n\n段落二。\n<!-- present: end-group -->\n')
+    const plan = planScenes(regions, measure(blocks, 421), VIEWPORT, 'balanced')
+
+    for (const scene of plan.scenes) expect(scene.warning ?? '').not.toContain(' 0%')
+  })
+
   it('shrinks the body-text row before giving up on a two-figure page', () => {
     const { blocks, regions } = regionsFrom(
       '<!-- present: group -->\n大量內文段落。\n\n![a](a.png){size=70%}\n\n![b](b.png){size=70%}\n<!-- present: end-group -->\n',
@@ -233,8 +254,25 @@ describe('planScenes — multi-figure grid', () => {
     const measurements = measure(blocks, (block) => (block.type === 'paragraph' ? 700 : block.type === 'figure' ? 280 : 40))
     const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
 
+    // Asserting the scale alone is not enough: the point of shrinking is that
+    // the page then FITS. An earlier one-pass correction produced a scale of
+    // 0.96 on this input and still overflowed to 1.002.
     expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
     expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('breaks rather than reporting a scale that does not rescue the page', () => {
+    // Text so tall that even the 0.6 floor cannot fit it beside two figures:
+    // the scene must break instead of claiming a scale and overflowing anyway.
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![a](a.png){size=70%}\n\n![b](b.png){size=70%}\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' ? 2000 : 280))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    for (const scene of plan.scenes) {
+      if (scene.blocks.length > 1) expect(scene.fillRatio).toBeLessThanOrEqual(1)
+    }
   })
 })
 
