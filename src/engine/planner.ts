@@ -186,6 +186,24 @@ export interface FigureComposition {
   cells: FigureCell[]
 }
 
+/**
+ * Legend heights measured at grid-cell width, keyed by column count.
+ *
+ * The measurement root renders every block at the full scene width, but a
+ * legend in an n-column grid renders at roughly 1/n of it with a `cqw` type
+ * size that does not shrink — so narrowing the column multiplies the line
+ * count. Scaling the full-width height by the column count is wrong in both
+ * directions: a short legend that still fits one line gets charged n times,
+ * and a legend with long unbreakable tokens gets charged too little. This map
+ * carries real heights instead; see `MeasurementRoot`.
+ */
+export type LegendMeasurements = Map<number, Map<string, number>>
+
+/** The blocks that could be a figure's legend, for the narrow measurement pass. */
+export function legendCandidates(blocks: PresentationBlock[]): PresentationBlock[] {
+  return figureCells(blocks).cells.flatMap((cell) => cell.legend)
+}
+
 // Position decides the role (design v5, extended for multi-figure grids):
 // everything before the first figure is body copy, and the consecutive
 // non-heading blocks immediately after a figure are that figure's legend.
@@ -272,6 +290,7 @@ function figureGridMetrics(
   measurements: Map<string, number>,
   sceneBudget: number,
   textScale: number,
+  legendMeasurements?: LegendMeasurements,
 ): FigureGridMetrics {
   const { bodyText, cells } = figureCells(blocks)
   const { rows, columns } = figureGridShape(cells.length)
@@ -293,13 +312,16 @@ function figureGridMetrics(
   let gridNeeded = Math.max(0, rows - 1) * FIGURE_ROW_GAP
   for (let row = 0; row < rows; row += 1) {
     const rowCells = cells.slice(row * columns, row * columns + columns)
-    // Legends are measured at the full scene width but render at 1/columns of
-    // it, and .figure-below-caption is sized in cqw — relative to the scene,
-    // not the column — so narrowing the column multiplies the line count
-    // instead of shrinking the type. Without this the planner under-counts
-    // legends and they spill out of their cells.
+    // Prefer heights measured at the real cell width. The `× columns` fallback
+    // is only for callers with no narrow measurement pass (unit tests, and the
+    // first frame before one has run); it over-charges every legend short
+    // enough to still fit one line in its column.
+    const atColumnWidth = legendMeasurements?.get(columns)
     const legendHeight = Math.max(0, ...rowCells.map((cell) =>
-      cell.legend.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0) * columns))
+      cell.legend.reduce((total, block) => {
+        const measured = atColumnWidth?.get(block.id)
+        return total + (measured ?? blockHeight(block, measurements, sceneBudget) * columns)
+      }, 0)))
     const chrome = FIGURE_CAPTION_ALLOWANCE + legendHeight
     const frameSlot = Math.max(minFrame, rowSlot - chrome)
     const frame = Math.max(0, ...rowCells.map((cell) => {
@@ -332,8 +354,9 @@ function figureGridPlan(
   blocks: PresentationBlock[],
   measurements: Map<string, number>,
   sceneBudget: number,
+  legendMeasurements?: LegendMeasurements,
 ): { metrics: FigureGridMetrics; textScale?: number } {
-  const metricsAt = (scale: number) => figureGridMetrics(blocks, measurements, sceneBudget, scale)
+  const metricsAt = (scale: number) => figureGridMetrics(blocks, measurements, sceneBudget, scale, legendMeasurements)
   const full = metricsAt(1)
   if (full.used <= sceneBudget || full.textRow <= 0) return { metrics: full }
   const floor = metricsAt(MIN_TEXT_SCALE)
@@ -366,15 +389,15 @@ export function figureGridColumns(blocks: PresentationBlock[]): number | undefin
   return count > 1 ? figureGridShape(count).columns : undefined
 }
 
-export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number | undefined {
+export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, legendMeasurements?: LegendMeasurements): number | undefined {
   if (chooseLayout(blocks) !== 'figure') return undefined
-  if (figureCells(blocks).cells.length > 1) return figureGridPlan(blocks, measurements, sceneBudget).textScale
+  if (figureCells(blocks).cells.length > 1) return figureGridPlan(blocks, measurements, sceneBudget, legendMeasurements).textScale
   const { available, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
   if (aboveHeight <= available) return undefined
   return Math.max(MIN_TEXT_SCALE, Math.round((available / aboveHeight) * 100) / 100)
 }
 
-function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number {
+function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, legendMeasurements?: LegendMeasurements): number {
   if (chooseLayout(blocks) === 'figure') {
     const figureCount = figureCells(blocks).cells.length
     if (figureCount > 1) {
@@ -383,7 +406,7 @@ function usedHeight(blocks: PresentationBlock[], measurements: Map<string, numbe
       // warning quotes verbatim — report a fabricated number ("overflows by
       // 84%" for a grid that actually fits). The cap is enforced as its own
       // predicate; this stays a real measurement.
-      return figureGridPlan(blocks, measurements, sceneBudget).metrics.used
+      return figureGridPlan(blocks, measurements, sceneBudget, legendMeasurements).metrics.used
     }
     const { headingTotal, available, frames, nonFrame, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
     const columnNeeded = frames + nonFrame
@@ -563,14 +586,14 @@ export function withPresentationCover(plan: ScenePlan, config: PresentationConfi
  * scoring is untouched — so where the original bindings were satisfiable the
  * partitioner behaves exactly as before.
  */
-function relaxOversizedChains(blocks: PresentationBlock[], measurements: Map<string, number>, capacity: number): PresentationBlock[] {
+function relaxOversizedChains(blocks: PresentationBlock[], measurements: Map<string, number>, capacity: number, legendMeasurements?: LegendMeasurements): PresentationBlock[] {
   const result = [...blocks]
   let changed = false
   let start = 0
   while (start < result.length) {
     let end = start
     while (end < result.length - 1 && result[end].keepWithNext && !result[end].groupId) end += 1
-    if (end > start && usedHeight(result.slice(start, end + 1), measurements, capacity) > capacity) {
+    if (end > start && usedHeight(result.slice(start, end + 1), measurements, capacity, legendMeasurements) > capacity) {
       // Preference 2: heading + one splittable companion that fits alone.
       if (end === start + 1 && result[start].type === 'heading') {
         const companion = result[end]
@@ -610,6 +633,7 @@ export function planScenes(
   viewportHeight: number,
   density: Density,
   previousPlan?: ScenePlan,
+  legendMeasurements?: LegendMeasurements,
 ): ScenePlan {
   const scenes: Scene[] = []
   const capacity = Math.max(320, viewportHeight - Math.max(90, viewportHeight * 0.16))
@@ -620,9 +644,10 @@ export function planScenes(
       region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements)),
       measurements,
       capacity,
+      legendMeasurements,
     )
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
-    const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
+    const regionUsed = usedHeight(plannedBlocks, measurements, capacity, legendMeasurements)
     // A figure region IS the page the author delimited with `---` or a
     // heading: it becomes exactly one scene whenever it fits (above-text
     // shrinks to help). A region that still cannot fit falls through to the
@@ -632,7 +657,7 @@ export function planScenes(
       && ((plannedBlocks.some((block) => block.type === 'figure') && regionUsed <= capacity)
         || regionUsed / capacity <= DENSITY_TARGETS[density].comfortable)) {
       const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
-      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity)))
+      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity, legendMeasurements)))
       continue
     }
 
@@ -672,7 +697,7 @@ export function planScenes(
       for (let end = start + 1; end <= total; end += 1) {
         if (insideGroup(end)) continue
         const candidateBlocks = plannedBlocks.slice(start, end)
-        const used = usedHeight(candidateBlocks, measurements, capacity)
+        const used = usedHeight(candidateBlocks, measurements, capacity, legendMeasurements)
         const evaluated = evaluate(candidateBlocks, end, total, used, capacity, density, previousEnds, plannedBlocks[end])
         if (evaluated.invalid && chosen) break
         const candidateTotal = evaluated.total + bestScore[end] - (end < total ? SCENE_COST : 0)
@@ -690,7 +715,7 @@ export function planScenes(
     for (let start = 0; start < total; ) {
       const choice = bestChoice[start]
       if (!choice) break
-      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown, figureTextScale(choice.blocks, measurements, capacity)))
+      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown, figureTextScale(choice.blocks, measurements, capacity, legendMeasurements)))
       start = choice.end
     }
   }

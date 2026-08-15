@@ -226,6 +226,24 @@ describe('planScenes — multi-figure grid', () => {
     }
   })
 
+  it('prefers legend heights measured at cell width over the × columns guess', () => {
+    // The fallback charges a short legend `columns` times even though it still
+    // fits one line in its column. Real measurements say otherwise, and the
+    // planner must believe them — the screenshots showed six single-line
+    // legends being budgeted as three lines each.
+    const { blocks, regions } = regionsFrom(
+      '![a](a.png){size=80%}\n\n甲說明。\n\n![b](b.png){size=80%}\n\n乙說明。\n\n![c](c.png){size=80%}\n\n丙說明。\n',
+    )
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 30))
+    const guessed = planScenes(regions, measurements, VIEWPORT, 'balanced').scenes[0]
+
+    // Measured at a third of the width these legends still take one line.
+    const atThree = new Map(blocks.filter((block) => block.type === 'paragraph').map((block) => [block.id, 30]))
+    const measured = planScenes(regions, measurements, VIEWPORT, 'balanced', undefined, new Map([[3, atThree]])).scenes[0]
+
+    expect(measured.fillRatio).toBeLessThan(guessed.fillRatio)
+  })
+
   it('says what actually went wrong when a group pins more than six figures', () => {
     // The cap is not a height overflow. Folding it into usedHeight made the
     // warning quote a fabricated percentage ("overflows by 84%") for a grid

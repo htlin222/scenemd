@@ -8,7 +8,9 @@ import '../../../src/styles.css'
 import '../../../src/scene-theme.css'
 import { buildSemanticRegions, parsePresentationDocument } from '../../../src/engine/semantics'
 import { planScenes } from '../../../src/engine/planner'
-import { BlockView, SceneView } from '../../../src/components/SceneView'
+import { SceneView } from '../../../src/components/SceneView'
+import { MeasurementRoot, collectMeasurements } from '../../../src/app/useMeasuredPlan'
+import type { LegendMeasurements } from '../../../src/engine/planner'
 import { defaultPresentationConfig } from '../../../src/presentationConfig'
 
 // Mirrors App.tsx: previewViewport() + the hidden measurement-root loop, so the
@@ -48,23 +50,22 @@ function Harness() {
   const blocks = useMemo(() => parsePresentationDocument(markdown), [markdown])
   const regions = useMemo(() => buildSemanticRegions(blocks), [blocks])
   const [measurements, setMeasurements] = useState<Map<string, number>>(new Map())
+  const [legendMeasurements, setLegendMeasurements] = useState<LegendMeasurements>(new Map())
   const measureRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const next = new Map<string, number>()
-      measureRef.current?.querySelectorAll<HTMLElement>('[data-measure-id], [data-measure-item-id]').forEach((element) => {
-        const id = element.dataset.measureId ?? element.dataset.measureItemId
-        if (id) next.set(id, element.getBoundingClientRect().height)
-      })
-      setMeasurements(next)
+      if (!measureRef.current) return
+      const next = collectMeasurements(measureRef.current)
+      setMeasurements(next.blocks)
+      setLegendMeasurements(next.legends)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [blocks])
 
   const plan = useMemo(
-    () => (measurements.size ? planScenes(regions, measurements, viewport.height, 'balanced') : null),
-    [regions, measurements],
+    () => (measurements.size ? planScenes(regions, measurements, viewport.height, 'balanced', undefined, legendMeasurements) : null),
+    [regions, measurements, legendMeasurements],
   )
 
   return (
@@ -91,11 +92,7 @@ function Harness() {
           <SceneView scene={scene} sceneNumber={index + 1} sceneCount={plan.scenes.length} presentationConfig={config} />
         </div>
       ))}
-      <div className="measurement-root" ref={measureRef} aria-hidden="true" style={{ width: Math.max(320, viewport.width - 150) }}>
-        {blocks.map((block) => (
-          <div data-measure-id={block.id} key={block.id}><BlockView block={block} measurement /></div>
-        ))}
-      </div>
+      <MeasurementRoot blocks={blocks} measureRef={measureRef} width={Math.max(320, viewport.width - 150)} />
     </div>
   )
 }
