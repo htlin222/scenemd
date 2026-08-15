@@ -23,6 +23,26 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      # Rendered geometry — column layout, frame heights, caption widths —
+      # is invisible to the node-environment vitest suite.
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+
   smoke:
     runs-on: ubuntu-latest
     steps:
