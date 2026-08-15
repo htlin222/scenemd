@@ -34,14 +34,13 @@ cols = ceil(n / rows)
 
 Cells fill left-to-right, then wrap to the next row.
 
-| n | grid |
-| --- | --- |
-| 2 | 1 × 2 |
-| 3 | 1 × 3 |
-| 4 | 2 × 2 |
-| 5 | 3 + 2 |
-| 6 | 3 × 3 |
-| 7 | 3 + 3 + 1 |
+| n | rows × cols | per row |
+| --- | --- | --- |
+| 2 | 1 × 2 | 2 |
+| 3 | 1 × 3 | 3 |
+| 4 | 2 × 2 | 2 + 2 |
+| 5 | 2 × 3 | 3 + 2 |
+| 6 | 2 × 3 | 3 + 3 |
 
 Three columns is the cap: narrower cells on a 16:9 frame reduce figures to
 postage stamps. Rows are balanced rather than greedy so four figures read as a
