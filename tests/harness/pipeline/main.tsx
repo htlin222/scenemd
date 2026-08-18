@@ -8,7 +8,9 @@ import '../../../src/styles.css'
 import '../../../src/scene-theme.css'
 import { buildSemanticRegions, parsePresentationDocument } from '../../../src/engine/semantics'
 import { planScenes } from '../../../src/engine/planner'
-import { BlockView, SceneView } from '../../../src/components/SceneView'
+import { SceneView } from '../../../src/components/SceneView'
+import { MeasurementRoot, collectMeasurements } from '../../../src/app/useMeasuredPlan'
+import type { LegendMeasurements } from '../../../src/engine/planner'
 import { defaultPresentationConfig } from '../../../src/presentationConfig'
 
 // Mirrors App.tsx: previewViewport() + the hidden measurement-root loop, so the
@@ -22,15 +24,23 @@ const viewport = {
 
 // The author's canonical figure-page pattern (design v5): `---` cuts pages;
 // inside a figure page, prose above the image is body copy and prose below it
-// is the legend. `?size=` overrides the figure size and `?heading=0` drops
-// the H2 so specs can compare both variants.
+// is the legend. `?size=` overrides the figure size, `?heading=0` drops the H2
+// so specs can compare both variants, and `?figures=N` writes N figures so the
+// multi-figure grid specs can drive the column count.
 const figureSize = Number(params.get('size') || 45)
 const withHeading = params.get('heading') !== '0'
+const figureCount = Math.max(1, Number(params.get('figures') || 1))
+// The one-figure legend text is unchanged so the pre-existing specs keep
+// asserting on the exact string they were written against.
+const legendFor = (index: number) => (figureCount === 1
+  ? '圖一：腎絲球過濾率隨年齡下降（資料來源：NHANES 系列研究）。'
+  : `圖${index + 1}：第 ${index + 1} 組資料的年齡分布與判讀重點。`)
+const FIGURES = Array.from({ length: figureCount }, (_, index) =>
+  `![Figure ${index + 1}](https://img.test/fig${index}.png){size=${figureSize}%}\n\n${legendFor(index)}`,
+).join('\n\n')
 const DOC = `${withHeading ? '## Renal function\n\n' : ''}腎功能隨年齡下降，本頁說明其臨床意義與判讀重點。
 
-![GFR chart](https://img.test/fig.png){size=${figureSize}%}
-
-圖一：腎絲球過濾率隨年齡下降（資料來源：NHANES 系列研究）。
+${FIGURES}
 `
 
 const config = defaultPresentationConfig('Pipeline harness')
@@ -40,23 +50,22 @@ function Harness() {
   const blocks = useMemo(() => parsePresentationDocument(markdown), [markdown])
   const regions = useMemo(() => buildSemanticRegions(blocks), [blocks])
   const [measurements, setMeasurements] = useState<Map<string, number>>(new Map())
+  const [legendMeasurements, setLegendMeasurements] = useState<LegendMeasurements>(new Map())
   const measureRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
     const frame = window.requestAnimationFrame(() => {
-      const next = new Map<string, number>()
-      measureRef.current?.querySelectorAll<HTMLElement>('[data-measure-id], [data-measure-item-id]').forEach((element) => {
-        const id = element.dataset.measureId ?? element.dataset.measureItemId
-        if (id) next.set(id, element.getBoundingClientRect().height)
-      })
-      setMeasurements(next)
+      if (!measureRef.current) return
+      const next = collectMeasurements(measureRef.current)
+      setMeasurements(next.blocks)
+      setLegendMeasurements(next.legends)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [blocks])
 
   const plan = useMemo(
-    () => (measurements.size ? planScenes(regions, measurements, viewport.height, 'balanced') : null),
-    [regions, measurements],
+    () => (measurements.size ? planScenes(regions, measurements, viewport.height, 'balanced', undefined, legendMeasurements) : null),
+    [regions, measurements, legendMeasurements],
   )
 
   return (
@@ -83,11 +92,7 @@ function Harness() {
           <SceneView scene={scene} sceneNumber={index + 1} sceneCount={plan.scenes.length} presentationConfig={config} />
         </div>
       ))}
-      <div className="measurement-root" ref={measureRef} aria-hidden="true" style={{ width: Math.max(320, viewport.width - 150) }}>
-        {blocks.map((block) => (
-          <div data-measure-id={block.id} key={block.id}><BlockView block={block} measurement /></div>
-        ))}
-      </div>
+      <MeasurementRoot blocks={blocks} measureRef={measureRef} width={Math.max(320, viewport.width - 150)} />
     </div>
   )
 }

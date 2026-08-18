@@ -11,6 +11,8 @@ React 19 + TypeScript 7 + Vite 8 on the frontend; Cloudflare Pages (static `dist
 ```bash
 npm run dev                 # Vite dev server (works without Cloudflare bindings)
 npm run typecheck           # BOTH projects — see note below
+npm test                    # vitest, node environment — the deterministic core
+npm run test:e2e            # Playwright against tests/harness/ — real rendered geometry
 npm run build               # tsc -b && vite build
 ./tools/deploy.sh           # build → D1 remote migrate → Worker deploy → Pages deploy
 npm run db:migrate:local    # apply migrations/ to the local D1
@@ -19,7 +21,12 @@ npm run db:migrate:remote
 
 `npm run typecheck` runs **two** compilations: `tsc -b` (the `src` app, DOM libs) and `tsc -p tsconfig.cloudflare.json` (`functions/` + `worker/`, `@cloudflare/workers-types`). Server code is not covered by `tsc -b` alone, so always run the full script.
 
-There is **no test runner in this repo**. CI (`.github/workflows/ci.yml`) is exactly `npm ci && npm run typecheck && npm run build` — that is the whole automated gate, so behavior changes need manual verification.
+Two test runners, split by what they can see:
+
+- **vitest** (`npm test`, `vitest.config.ts`) runs in **node with no DOM** over `src/**/*.test.ts`, `worker/**`, `functions/**`, and `test/**`. It covers the deterministic core — semantics, the planner, merge, image syntax — plus `test/corpus/`, which plans a fixture matrix and snapshots an aggregate scene-count/fill profile. That snapshot is a reviewable dashboard, not an invariant: a planner change is expected to move it, and the delta belongs in the commit message.
+- **Playwright** (`npm run test:e2e`) drives `tests/harness/` — `pipeline/` runs the real markdown → measure → planScenes → SceneView path in a browser, and the root harness mounts the editor. Anything about *rendered geometry* (column layout, frame heights, caption widths) has to be tested here; vitest cannot see it. Both harnesses must import `src/scene-theme.css`, or the scene renders unstyled and every geometry assertion is meaningless.
+
+CI (`.github/workflows/ci.yml`) runs lint → test → typecheck → build, plus e2e and the smoke script as separate jobs.
 
 `tools/browser-check.mjs` is the manual smoke test: it drives an already-running Chrome via CDP on `127.0.0.1:9222` against `SCENEMD_TEST_URL` (default `http://127.0.0.1:5173`), asserts on DOM selectors, and writes screenshots into `artifacts/`. It fails if selectors like `.documents-hero h1`, `.cm-editor`, or `.markdown-mode-tabs` change — update the script alongside such UI renames.
 
@@ -57,7 +64,11 @@ markdown
 - Blocks taller than the capacity are pre-split by `continuationParts` per type (paragraph/blockquote inline splitting on word and punctuation boundaries, list items, code lines, table rows repeating the header, columns). Parts get `-part-N` ids and `keepWithPrevious`.
 - The `stability` score rewards break points that matched the previous plan, which is what keeps scenes from reflowing wildly on resize. Preserve `previousPlanRef` threading when touching the planning effect.
 - `chooseLayout()` derives the layout (`chapter`/`text`/`text-media`/`media-dominant`/`legend`/`statement`) from block composition. Authors do not pick layouts.
-- Figure scenes have exactly one layout (design v5, `docs/plans/2026-08-14-image-config-design.md`): optional heading, then figure left / body text right. Position decides text roles — prose above the figure is body copy (it shrinks via `figureTextScale`, floor 0.6, rather than leaving the page); consecutive paragraphs below the figure are its legend and stay with it. `size=NN%` is a fraction of the figure column (the height under the heading), resolved by CSS percentages so planner and renderer share one formula. The write vocabulary is `{size=NN%}` only; width/height/fit/filter/bg/layout and Marpit alt tokens are read-compat and normalize away on a dialog save (hero maps to `size=100%`). `<!-- present: group -->` … `<!-- present: end-group -->` still hard-binds arbitrary blocks to one scene.
+- A **single-figure** scene has exactly one layout (design v5, `docs/plans/2026-08-14-image-config-design.md`): optional heading, then figure left / body text right. `size=NN%` is a fraction of the figure column (the height under the heading), resolved by CSS percentages so planner and renderer share one formula.
+- A scene with **two or more figures** becomes a grid instead (`docs/plans/2026-08-15-multi-figure-grid-design.md`): optional heading, a full-width body-text row, then `rows = ceil(n/3)`, `cols = ceil(n/rows)` cells filled left-to-right, capped at six figures. `size=NN%` rebases onto the figure's own cell; `grid-auto-rows: 1fr` is what keeps the renderer agreeing with the planner's row slot. **This repaginates existing documents** — decks whose sized figures used to stack across pages collapse onto one, and the same `size=NN%` renders smaller once a second figure joins its page.
+- Because a legend renders at `1/cols` of the scene width with a `cqw` type size that does not shrink, `MeasurementRoot` measures legend candidates a second and third time at real cell width; the planner uses those heights. Do not "correct" a full-width measurement by multiplying — text height is not inversely linear in width, and that path survives only as a fallback. Narrow measurement copies must never declare `container-type`, or `cqw` resolves against them and changes the type size being measured.
+- The six-figure cap is `exceedsFigureLimit()`, a predicate on candidate validity — never fold it into `usedHeight`. `fillRatio` is shown in the debug card and quoted by the overflow warning, so an inflated height makes the app state a fabricated number.
+- Position decides text roles in both layouts, and `figureCells()` in `planner.ts` is the single derivation — the planner's height model and `SceneView` both call it. Prose before the first figure is body copy (it shrinks via `figureTextScale`, floor 0.6, rather than leaving the page); the paragraphs immediately after a figure are that figure's legend, and the next figure ends the run. Known hazard: a document written `引言 → 圖 → 引言 → 圖` gets every lead-in attributed to the *preceding* figure. The two styles are the same token sequence shifted by one, so no structural rule separates them — `test/corpus/fixtures/image-heavy.md` is written the losing way. The write vocabulary is `{size=NN%}` only; width/height/fit/filter/bg/layout and Marpit alt tokens are read-compat and normalize away on a dialog save (hero maps to `size=100%`). `<!-- present: group -->` … `<!-- present: end-group -->` still hard-binds arbitrary blocks to one scene.
 
 ### Backend split
 

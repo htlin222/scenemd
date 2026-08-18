@@ -62,27 +62,33 @@ test('the popover round-trips hybrid attribute syntax', async ({ page }) => {
   // Bracket text is verbatim alt; size is the only writable config.
   await expect(popover.getByLabel('Alt text')).toHaveValue('Hybrid chart')
 
-  await popover.getByLabel('Size (scene %)').fill('55%')
+  await popover.getByPlaceholder('e.g. 45%').fill('55%')
   await popover.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText(
     '![Hybrid chart](https://img.test/three.png){size=55%} Hybrid legend text.',
   )
 })
 
-test('dragging the size handle on the canvas writes a size attribute', async ({ page }) => {
+test('dragging the size handle moves size by the dragged fraction of the frame area', async ({ page }) => {
   await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
   const dialog = page.locator('.figure-dialog')
   await expect(dialog).toBeVisible()
 
-  const canvas = await dialog.locator('.figure-dialog-canvas').boundingBox()
+  // `size` is a percentage of the frame area — what --frame-area-height
+  // resolves against — not of the canvas. Dragging a fifth of that area must
+  // move size by about twenty points, whatever the surrounding layout is.
+  const area = await dialog.locator('.figure-frame-area').first().boundingBox()
   const handle = await dialog.locator('.figure-size-handle').boundingBox()
-  expect(canvas && handle).toBeTruthy()
+  expect(area && handle).toBeTruthy()
   const startX = handle!.x + handle!.width / 2
   const startY = handle!.y + handle!.height / 2
   await page.mouse.move(startX, startY)
   await page.mouse.down()
-  await page.mouse.move(startX, startY + canvas!.height * 0.2, { steps: 5 })
+  await page.mouse.move(startX, startY + area!.height * 0.2, { steps: 5 })
   await page.mouse.up()
+
+  const shown = Number.parseInt((await dialog.locator('.figure-size-handle').innerText()).replace('%', ''), 10)
+  expect(Math.abs(shown - 75)).toBeLessThanOrEqual(4)
 
   await dialog.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText(/\{size=7\d%\} Hybrid legend text\./)
@@ -105,6 +111,13 @@ test('the size handle drags all the way to full bleed', async ({ page }) => {
 
   await dialog.getByRole('button', { name: 'Save' }).click()
   await expect(page.locator('.cm-content')).toContainText('{size=100%} Hybrid legend text.')
+})
+
+test('the size field says which basis the percentage is against', async ({ page }) => {
+  // The harness document has three figures on one page, so size is a
+  // fraction of the figure's own cell — the label must not claim "scene".
+  await page.locator('.cm-line', { hasText: '![Hybrid chart]' }).click({ position: { x: 40, y: 16 } })
+  await expect(page.locator('.figure-dialog')).toContainText('Size (cell %, 3-up grid)')
 })
 
 test('an external value update keeps the cursor where it was', async ({ page }) => {

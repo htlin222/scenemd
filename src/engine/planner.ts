@@ -160,6 +160,83 @@ const MIN_FRAME_SHRINK = 0.75
 // Above-figure prose may shrink to fit the scene ("縮小文字，總之塞就對了"),
 // down to this floor — below it the scene overflows visibly instead.
 const MIN_TEXT_SCALE = 0.6
+// Gap between the body-text row and the figure grid, and between grid rows.
+// They mirror the `gap` values in .figure-gallery / .figure-gallery-grid.
+const FIGURE_GRID_GAP = 20
+const FIGURE_ROW_GAP = 18
+// A frame below this share of the scene is not a figure, it is a smudge; the
+// grid stops shrinking here and lets the body text yield, or the scene break.
+//
+// It is a fraction of the scene budget, not a pixel count: an absolute floor
+// means 12% of a tall stage and 41% of a short one, so the same document
+// paginates differently for no reason the author can see. It is deliberately
+// NOT a fraction of the row slot — the slot is exactly the quantity that
+// shrinks under pressure, so a floor defined against it can always be
+// satisfied and never forces anything to give way.
+const MIN_FRAME_RATIO = 0.13
+const minFrameHeight = (sceneBudget: number) => sceneBudget * MIN_FRAME_RATIO
+
+export interface FigureCell {
+  figure: PresentationBlock
+  legend: PresentationBlock[]
+}
+
+export interface FigureComposition {
+  bodyText: PresentationBlock[]
+  cells: FigureCell[]
+}
+
+/**
+ * Legend heights measured at grid-cell width, keyed by column count.
+ *
+ * The measurement root renders every block at the full scene width, but a
+ * legend in an n-column grid renders at roughly 1/n of it with a `cqw` type
+ * size that does not shrink — so narrowing the column multiplies the line
+ * count. Scaling the full-width height by the column count is wrong in both
+ * directions: a short legend that still fits one line gets charged n times,
+ * and a legend with long unbreakable tokens gets charged too little. This map
+ * carries real heights instead; see `MeasurementRoot`.
+ */
+export type LegendMeasurements = Map<number, Map<string, number>>
+
+/** The blocks that could be a figure's legend, for the narrow measurement pass. */
+export function legendCandidates(blocks: PresentationBlock[]): PresentationBlock[] {
+  return figureCells(blocks).cells.flatMap((cell) => cell.legend)
+}
+
+// Position decides the role (design v5, extended for multi-figure grids):
+// everything before the first figure is body copy, and the consecutive
+// non-heading blocks immediately after a figure are that figure's legend.
+// The planner's height model and SceneView both read this — deriving it twice
+// is how the two drift apart.
+export function figureCells(blocks: PresentationBlock[]): FigureComposition {
+  const bodyText: PresentationBlock[] = []
+  const cells: FigureCell[] = []
+  for (const block of blocks) {
+    if (block.type === 'heading') continue
+    if (block.type === 'figure') {
+      cells.push({ figure: block, legend: [] })
+      continue
+    }
+    if (cells.length) cells[cells.length - 1].legend.push(block)
+    else bodyText.push(block)
+  }
+  return { bodyText, cells }
+}
+
+// Three columns is the cap: on a 16:9 stage a fourth column turns figures into
+// postage stamps. Rows are balanced rather than greedily filled so four
+// figures read as a 2 × 2 quadrant instead of a 3 + 1 orphan.
+const MAX_FIGURE_COLUMNS = 3
+// A seventh figure would need a third row of stamps; the planner breaks the
+// scene instead (see usedHeight).
+export const MAX_FIGURES_PER_SCENE = 6
+
+export function figureGridShape(count: number): { rows: number; columns: number } {
+  if (count <= 1) return { rows: count, columns: count }
+  const rows = Math.ceil(count / MAX_FIGURE_COLUMNS)
+  return { rows, columns: Math.ceil(count / rows) }
+}
 
 interface FigureColumns {
   headingTotal: number
@@ -199,15 +276,138 @@ function figureColumns(blocks: PresentationBlock[], measurements: Map<string, nu
   return { headingTotal, available, frames, nonFrame, aboveHeight }
 }
 
-export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number | undefined {
+interface FigureGridMetrics {
+  columns: number
+  textRow: number
+  used: number
+}
+
+// Two or more figures share a grid instead of stacking: the body text is a
+// full-width row and the figures sit under it, so the scene's height is a sum
+// where the single-figure layout takes a max (they are side by side there).
+function figureGridMetrics(
+  blocks: PresentationBlock[],
+  measurements: Map<string, number>,
+  sceneBudget: number,
+  textScale: number,
+  legendMeasurements?: LegendMeasurements,
+): FigureGridMetrics {
+  const { bodyText, cells } = figureCells(blocks)
+  const { rows, columns } = figureGridShape(cells.length)
+  const headings = blocks.filter((block) => block.type === 'heading')
+  const headingTotal = headings.length
+    ? headings.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+      + Math.max(0, headings.length - 1) * 20 + 20
+    : 0
+  const available = Math.max(120, sceneBudget - headingTotal)
+  const textRow = bodyText.length
+    ? (bodyText.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+      + (bodyText.length - 1) * 12) * textScale
+    : 0
+  const textGap = bodyText.length ? FIGURE_GRID_GAP : 0
+  const minFrame = minFrameHeight(sceneBudget)
+  const gridSpace = Math.max(minFrame, available - textRow - textGap)
+  const rowSlot = (gridSpace - (rows - 1) * FIGURE_ROW_GAP) / rows
+
+  let gridNeeded = Math.max(0, rows - 1) * FIGURE_ROW_GAP
+  for (let row = 0; row < rows; row += 1) {
+    const rowCells = cells.slice(row * columns, row * columns + columns)
+    // Prefer heights measured at the real cell width. The `× columns` fallback
+    // is only for callers with no narrow measurement pass (unit tests, and the
+    // first frame before one has run); it over-charges every legend short
+    // enough to still fit one line in its column.
+    const atColumnWidth = legendMeasurements?.get(columns)
+    const legendHeight = Math.max(0, ...rowCells.map((cell) =>
+      cell.legend.reduce((total, block) => {
+        const measured = atColumnWidth?.get(block.id)
+        return total + (measured ?? blockHeight(block, measurements, sceneBudget) * columns)
+      }, 0)))
+    const chrome = FIGURE_CAPTION_ALLOWANCE + legendHeight
+    const frameSlot = Math.max(minFrame, rowSlot - chrome)
+    const frame = Math.max(0, ...rowCells.map((cell) => {
+      const sized = cell.figure.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
+      // The floor is on the frame, not the slot: a frame that has shrunk past
+      // it is a smudge, so the grid keeps claiming the minimum frame and the
+      // body text yields instead (or the scene breaks). Unsized figures were
+      // measured against .measurement-root's fixed frame, so they may claim
+      // more than their cell — clamp them to it.
+      return sized
+        ? Math.max(minFrame, (frameSlot * Number(sized[1])) / 100)
+        : Math.min(blockHeight(cell.figure, measurements, sceneBudget), frameSlot)
+    }))
+    gridNeeded += frame + chrome
+  }
+  return { columns, textRow, used: headingTotal + textRow + textGap + gridNeeded }
+}
+
+// Body text shrinks (floor 0.6) before the grid gives ground, matching the
+// single-figure rule.
+//
+// Solving for the scale in one step does not work: shrinking the text also
+// frees grid space, which sized figures immediately grow into, so the surplus
+// recovered per unit of shrink is `1 - size%`, not 1. A single pass therefore
+// under-corrects by 1/(1-size%) and leaves the scene overflowing by a hair
+// while reporting a scale that "fixed" it. `used()` is monotone
+// non-decreasing in the scale, so bisect instead — that stays correct through
+// the minimum-frame clamp, which no closed form survives.
+function figureGridPlan(
+  blocks: PresentationBlock[],
+  measurements: Map<string, number>,
+  sceneBudget: number,
+  legendMeasurements?: LegendMeasurements,
+): { metrics: FigureGridMetrics; textScale?: number } {
+  const metricsAt = (scale: number) => figureGridMetrics(blocks, measurements, sceneBudget, scale, legendMeasurements)
+  const full = metricsAt(1)
+  if (full.used <= sceneBudget || full.textRow <= 0) return { metrics: full }
+  const floor = metricsAt(MIN_TEXT_SCALE)
+  // Even at the floor it overflows: report the floor and let the scene break.
+  if (floor.used > sceneBudget) return { metrics: floor, textScale: MIN_TEXT_SCALE }
+  let low = MIN_TEXT_SCALE
+  let high = 1
+  for (let step = 0; step < 12; step += 1) {
+    const mid = (low + high) / 2
+    if (metricsAt(mid).used <= sceneBudget) low = mid
+    else high = mid
+  }
+  // Floor to whole percent: rounding up could re-cross the budget, and the
+  // renderer receives this exact number as --figure-text-scale.
+  const textScale = Math.max(MIN_TEXT_SCALE, Math.floor(low * 100) / 100)
+  return { metrics: metricsAt(textScale), textScale }
+}
+
+// Sized figures shrink into whatever space is left, so height arithmetic alone
+// would accept a dozen figures on one scene. The cap is a separate, honest
+// predicate rather than a fake height: it makes a candidate invalid, and when
+// an author forces the violation with `present: group` it produces a warning
+// that says what actually went wrong.
+export function exceedsFigureLimit(blocks: PresentationBlock[]): boolean {
+  return figureCells(blocks).cells.length > MAX_FIGURES_PER_SCENE
+}
+
+export function figureGridColumns(blocks: PresentationBlock[]): number | undefined {
+  const count = figureCells(blocks).cells.length
+  return count > 1 ? figureGridShape(count).columns : undefined
+}
+
+export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, legendMeasurements?: LegendMeasurements): number | undefined {
   if (chooseLayout(blocks) !== 'figure') return undefined
+  if (figureCells(blocks).cells.length > 1) return figureGridPlan(blocks, measurements, sceneBudget, legendMeasurements).textScale
   const { available, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
   if (aboveHeight <= available) return undefined
   return Math.max(MIN_TEXT_SCALE, Math.round((available / aboveHeight) * 100) / 100)
 }
 
-function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): number {
+function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, legendMeasurements?: LegendMeasurements): number {
   if (chooseLayout(blocks) === 'figure') {
+    const figureCount = figureCells(blocks).cells.length
+    if (figureCount > 1) {
+      // The figure cap is NOT folded in here. Inflating the height to force a
+      // break made fillRatio — which the debug card shows and the overflow
+      // warning quotes verbatim — report a fabricated number ("overflows by
+      // 84%" for a grid that actually fits). The cap is enforced as its own
+      // predicate; this stays a real measurement.
+      return figureGridPlan(blocks, measurements, sceneBudget, legendMeasurements).metrics.used
+    }
     const { headingTotal, available, frames, nonFrame, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
     const columnNeeded = frames + nonFrame
     const columnMinimum = frames * MIN_FRAME_SHRINK + nonFrame
@@ -276,7 +476,7 @@ function evaluate(
     total: Object.values(breakdown).reduce((sum, value) => sum + value, 0),
     breakdown,
     fillRatio,
-    invalid: overflow && blocks.length > 1,
+    invalid: (overflow || exceedsFigureLimit(blocks)) && blocks.length > 1,
   }
 }
 
@@ -295,11 +495,17 @@ function makeScene(
   // spec: "unintentional hard overflow = 0". When content genuinely cannot
   // fit — a single unsplittable block taller than the capacity — the overflow
   // is intentional but must never be silent (#7). SceneView renders this.
-  const warning = fillRatio > 1
-    ? blocks.length === 1
-      ? `${first.type === 'figure' ? 'Image' : first.type === 'math' ? 'Display math' : first.type === 'table' ? 'Table' : 'This block'} is taller than the scene by ${Math.round((fillRatio - 1) * 100)}% and cannot be split`
-      : `Content overflows this scene by ${Math.round((fillRatio - 1) * 100)}%`
-    : undefined
+  // A figure count past the cap is not a height overflow, so it gets its own
+  // message: quoting a percentage here would invent a number.
+  const figureCount = figureCells(blocks).cells.length
+  const overflowPercent = Math.max(1, Math.round((fillRatio - 1) * 100))
+  const warning = exceedsFigureLimit(blocks)
+    ? `A scene holds at most ${MAX_FIGURES_PER_SCENE} figures; this one is pinned to ${figureCount}`
+    : fillRatio > 1
+      ? blocks.length === 1
+        ? `${first.type === 'figure' ? 'Image' : first.type === 'math' ? 'Display math' : first.type === 'table' ? 'Table' : 'This block'} is taller than the scene by ${overflowPercent}% and cannot be split`
+        : `Content overflows this scene by ${overflowPercent}%`
+      : undefined
   return {
     id: `scene-${hash(`${region.id}:${first.id}:${last.id}`)}`,
     role: first.type === 'heading' && first.depth === 1 ? 'chapter' : 'content',
@@ -318,6 +524,9 @@ function makeScene(
     scores,
     warning,
     figureTextScale: textScale,
+    // Derived here rather than at the two call sites: makeScene already has
+    // the blocks, and one derivation cannot drift from the other.
+    figureColumns: figureGridColumns(blocks),
     continuationLabel: first.continuation ? `${region.headingPath.at(-1) ?? 'Section'} (continued)` : undefined,
     breadcrumb: first.type === 'heading' && first.depth === 3 ? region.headingPath.at(-2) : undefined,
   }
@@ -377,14 +586,14 @@ export function withPresentationCover(plan: ScenePlan, config: PresentationConfi
  * scoring is untouched — so where the original bindings were satisfiable the
  * partitioner behaves exactly as before.
  */
-function relaxOversizedChains(blocks: PresentationBlock[], measurements: Map<string, number>, capacity: number): PresentationBlock[] {
+function relaxOversizedChains(blocks: PresentationBlock[], measurements: Map<string, number>, capacity: number, legendMeasurements?: LegendMeasurements): PresentationBlock[] {
   const result = [...blocks]
   let changed = false
   let start = 0
   while (start < result.length) {
     let end = start
     while (end < result.length - 1 && result[end].keepWithNext && !result[end].groupId) end += 1
-    if (end > start && usedHeight(result.slice(start, end + 1), measurements, capacity) > capacity) {
+    if (end > start && usedHeight(result.slice(start, end + 1), measurements, capacity, legendMeasurements) > capacity) {
       // Preference 2: heading + one splittable companion that fits alone.
       if (end === start + 1 && result[start].type === 'heading') {
         const companion = result[end]
@@ -424,6 +633,7 @@ export function planScenes(
   viewportHeight: number,
   density: Density,
   previousPlan?: ScenePlan,
+  legendMeasurements?: LegendMeasurements,
 ): ScenePlan {
   const scenes: Scene[] = []
   const capacity = Math.max(320, viewportHeight - Math.max(90, viewportHeight * 0.16))
@@ -434,18 +644,20 @@ export function planScenes(
       region.blocks.flatMap((block) => continuationParts(block, blockHeight(block, measurements, capacity), capacity, measurements)),
       measurements,
       capacity,
+      legendMeasurements,
     )
     const planningRegion = plannedBlocks === region.blocks ? region : { ...region, blocks: plannedBlocks }
-    const regionUsed = usedHeight(plannedBlocks, measurements, capacity)
+    const regionUsed = usedHeight(plannedBlocks, measurements, capacity, legendMeasurements)
     // A figure region IS the page the author delimited with `---` or a
     // heading: it becomes exactly one scene whenever it fits (above-text
     // shrinks to help). A region that still cannot fit falls through to the
     // partitioner so excess text flows out — 文讓步 — instead of producing a
     // giant overflowing scene on arbitrary documents.
-    if ((plannedBlocks.some((block) => block.type === 'figure') && regionUsed <= capacity)
-      || regionUsed / capacity <= DENSITY_TARGETS[density].comfortable) {
+    if (!exceedsFigureLimit(plannedBlocks)
+      && ((plannedBlocks.some((block) => block.type === 'figure') && regionUsed <= capacity)
+        || regionUsed / capacity <= DENSITY_TARGETS[density].comfortable)) {
       const evaluated = evaluate(plannedBlocks, plannedBlocks.length, plannedBlocks.length, regionUsed, capacity, density, previousEnds)
-      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity)))
+      scenes.push(makeScene(planningRegion, plannedBlocks, regionUsed, capacity, evaluated.total, evaluated.breakdown, figureTextScale(plannedBlocks, measurements, capacity, legendMeasurements)))
       continue
     }
 
@@ -485,7 +697,7 @@ export function planScenes(
       for (let end = start + 1; end <= total; end += 1) {
         if (insideGroup(end)) continue
         const candidateBlocks = plannedBlocks.slice(start, end)
-        const used = usedHeight(candidateBlocks, measurements, capacity)
+        const used = usedHeight(candidateBlocks, measurements, capacity, legendMeasurements)
         const evaluated = evaluate(candidateBlocks, end, total, used, capacity, density, previousEnds, plannedBlocks[end])
         if (evaluated.invalid && chosen) break
         const candidateTotal = evaluated.total + bestScore[end] - (end < total ? SCENE_COST : 0)
@@ -503,7 +715,7 @@ export function planScenes(
     for (let start = 0; start < total; ) {
       const choice = bestChoice[start]
       if (!choice) break
-      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown, figureTextScale(choice.blocks, measurements, capacity)))
+      scenes.push(makeScene(planningRegion, choice.blocks, choice.used, capacity, choice.total, choice.breakdown, figureTextScale(choice.blocks, measurements, capacity, legendMeasurements)))
       start = choice.end
     }
   }

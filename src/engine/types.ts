@@ -130,6 +130,8 @@ export interface Scene {
   scores: ScoreBreakdown
   warning?: string
   figureTextScale?: number
+  /** Column count for a multi-figure grid scene; absent for the v5 single-figure layout. */
+  figureColumns?: number
   continuationLabel?: string
   breadcrumb?: string
 }
