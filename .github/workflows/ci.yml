@@ -43,7 +43,7 @@ jobs:
       # invisible to the node-environment vitest suite, so nothing else in CI
       # can catch a figure-layout regression.
       - run: npm run test:e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
