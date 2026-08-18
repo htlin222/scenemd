@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import katex from 'katex'
 import type { InlineNode, PresentationBlock, PresentationConfig, Scene } from '../engine/types'
+import { figureCells } from '../engine/planner'
 import { imageFilterCss } from '../imageSyntax'
 
 interface BlockViewProps {
@@ -127,6 +128,31 @@ function FigureFrameArea({ children, onImageWidth }: { children: ReactNode; onIm
   return (
     <div className="figure-frame-area" ref={ref} style={areaHeight ? { '--frame-area-height': `${areaHeight}px` } as CSSProperties : undefined}>
       {children}
+    </div>
+  )
+}
+
+// Each grid cell owns its own frame-area measurement and its own image width.
+// Sharing SceneView's single figureImageWidth across cells would set every
+// caption to the widest image's width, and --frame-area-height has to be per
+// cell or `size=NN%` resolves against the wrong box.
+function FigureCell({ figure, legend, revealIndex, measurement }: {
+  figure: PresentationBlock
+  legend: PresentationBlock[]
+  revealIndex?: number
+  measurement: boolean
+}) {
+  const [imageWidth, setImageWidth] = useState<number | null>(null)
+  return (
+    <div className="figure-cell" style={imageWidth ? { '--figure-width': `${imageWidth}px` } as CSSProperties : undefined}>
+      <FigureFrameArea onImageWidth={setImageWidth}>
+        <BlockView block={figure} revealIndex={revealIndex} measurement={measurement} />
+      </FigureFrameArea>
+      {legend.length > 0 && (
+        <div className="figure-below-caption">
+          {legend.map((block) => <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} />)}
+        </div>
+      )}
     </div>
   )
 }
@@ -299,7 +325,9 @@ function DebugCard({ scene }: { scene: Scene }) {
     <aside className="debug-card" aria-label="Planner score breakdown">
       <div className="debug-title"><span>Planner trace</span><strong>{scene.score}</strong></div>
       {rows.map(([label, value]) => <div className="debug-row" key={label}><span>{label}</span><span>{value}</span></div>)}
-      <div className="debug-source">L{scene.sourceRange.startLine}–{scene.sourceRange.endLine} · {scene.layout}</div>
+      {/* `figure` covers two structurally different height models; without the
+          column count there is no way to tell from the trace which one ran. */}
+      <div className="debug-source">L{scene.sourceRange.startLine}–{scene.sourceRange.endLine} · {scene.layout}{scene.figureColumns ? ` grid ×${scene.figureColumns}` : ''}</div>
     </aside>
   )
 }
@@ -325,11 +353,16 @@ interface SceneViewProps {
 export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revealIndex, measurement = false, navigationLabels = [], activeNavigationLabel, onNavigateLabel, presentationConfig, citationReferences }: SceneViewProps) {
   const heading = scene.blocks.find((block) => block.type === 'heading')
   const content = scene.blocks.filter((block) => block !== heading)
-  const visibleFigures = content.filter((block) => block.type === 'figure')
-  const prose = content.filter((block) => block.type !== 'figure')
-  const firstFigureIndex = scene.blocks.findIndex((block) => block.type === 'figure')
-  const aboveProse = prose.filter((block) => scene.blocks.indexOf(block) < firstFigureIndex)
-  const belowProse = prose.filter((block) => scene.blocks.indexOf(block) > firstFigureIndex)
+  // One rule, shared with the planner: prose before the first figure is body
+  // copy, and the prose after a figure is that figure's legend.
+  const { bodyText, cells } = figureCells(scene.blocks)
+  const isGallery = scene.layout === 'figure' && cells.length > 1
+  const visibleFigures = cells.map((cell) => cell.figure)
+  const aboveProse = bodyText
+  // The bg panel takes every figure, so the left column carries all the prose:
+  // the body copy plus every figure's legend, in document order.
+  const bgProse = content.filter((block) => block.type !== 'figure')
+  const belowProse = cells[0]?.legend ?? []
   const [figureImageWidth, setFigureImageWidth] = useState<number | null>(null)
   useEffect(() => setFigureImageWidth(null), [scene.id])
   const sceneReferences = sceneCitationNumbers(scene)
@@ -403,7 +436,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
             <div className="figure-bg-left">
               {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
               <div className="figure-bg-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
-                {renderBlocks(prose)}
+                {renderBlocks(bgProse)}
                 {visibleFigures.filter((block) => block.caption?.length || block.alt).map((block) => (
                   <p className="figure-bg-caption" key={`${block.id}-caption`}><FigureCaption block={block} /></p>
                 ))}
@@ -411,6 +444,21 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
             </div>
             <div className="figure-bg-panel">
               {visibleFigures.map((block) => <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} hideCaption />)}
+            </div>
+          </div>
+        ) : isGallery ? (
+          // Two or more figures: the body text is a full-width row above a
+          // balanced grid, and every figure carries its own legend.
+          <div className="figure-gallery" style={{ '--figure-cols': scene.figureColumns ?? 2 } as CSSProperties}>
+            {!!bodyText.length && (
+              <div className="figure-gallery-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
+                {renderBlocks(bodyText)}
+              </div>
+            )}
+            <div className="figure-gallery-grid">
+              {cells.map((cell) => (
+                <FigureCell key={cell.figure.id} figure={cell.figure} legend={cell.legend} revealIndex={revealIndex} measurement={measurement} />
+              ))}
             </div>
           </div>
         ) : scene.layout === 'figure' ? (

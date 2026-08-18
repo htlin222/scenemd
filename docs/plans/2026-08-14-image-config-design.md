@@ -2,6 +2,11 @@
 
 Date: 2026-08-14 · Status: approved (chat), implementing on `fix/editor-scroll-top`
 
+> **Amended 2026-08-15.** The "every figure scene has exactly one layout" rule
+> here holds only for scenes with a single figure. Two or more figures lay out
+> as a grid, and `size=NN%` rebases onto the figure's own cell — see
+> [2026-08-15-multi-figure-grid-design.md](2026-08-15-multi-figure-grid-design.md).
+
 ## Problem
 
 The Marpit alt-token syntax packs alt text, sizing, layout, and filters into one

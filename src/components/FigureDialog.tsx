@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Check, Image, LoaderCircle, Upload, X } from 'lucide-react'
 import { clampSizePercent, type MarpitImageOptions } from '../imageSyntax'
 import { SceneView } from './SceneView'
-import { chooseLayout } from '../engine/planner'
+import { chooseLayout, figureGridColumns } from '../engine/planner'
 import { buildSemanticRegions, parsePresentationDocument } from '../engine/semantics'
 import { defaultPresentationConfig } from '../presentationConfig'
 import type { PresentationBlock, Scene } from '../engine/types'
@@ -87,6 +87,7 @@ function contextScene(state: FigureDialogState): { scene: Scene; targetId: strin
       endBlockId: sceneBlocks[sceneBlocks.length - 1].id,
       blocks: sceneBlocks,
       layout: chooseLayout(sceneBlocks),
+      figureColumns: figureGridColumns(sceneBlocks),
       sourceRange: sceneBlocks[0].sourceRange,
       fillRatio: 0,
       score: 0,
@@ -143,12 +144,19 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
 
   const beginResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
-    const canvasHeight = canvasRef.current?.getBoundingClientRect().height
-    if (!canvasHeight) return
+    // The drag basis must be whatever `size` is a percentage OF, which is the
+    // frame area (`--frame-area-height`) the renderer resolves it against —
+    // the figure column for a lone figure, this figure's own cell in a grid.
+    // Using the canvas was a rough stand-in for the first case and simply
+    // wrong for the second, where the cell is a fraction of the canvas.
+    const frame = canvasRef.current?.querySelector(`[data-block-id="${targetId}"] .figure-frame`)
+    const basis = frame?.closest('.figure-frame-area')?.getBoundingClientRect().height
+      || canvasRef.current?.getBoundingClientRect().height
+    if (!basis) return
     const startY = event.clientY
     const startSize = size
     const onMove = (moveEvent: PointerEvent) => {
-      const next = clampSizePercent(startSize + ((moveEvent.clientY - startY) / canvasHeight) * 100)
+      const next = clampSizePercent(startSize + ((moveEvent.clientY - startY) / basis) * 100)
       onChange({ size: `${Math.round(next)}%` })
     }
     const onEnd = () => {
@@ -215,7 +223,10 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
           </div>
           <label className="figure-field-check"><input type="checkbox" checked={state.options.background} onChange={(event) => onChange(event.target.checked ? { background: true } : { background: false, size: state.options.size || '55%' })} title="Full-height right-bleed panel: the image runs to the scene edges, all text moves to the left column." /><span>Full bleed (bg)</span></label>
           {!state.options.background && (
-            <label><span>Size (scene %)</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title="How much of the scene the figure occupies. Everything else follows the fixed layout." /></label>
+            /* The basis is not always the scene: on a page with two or more
+               figures `size` is a fraction of this figure's own grid cell, so
+               the label has to say which. */
+            <label><span>{scene.figureColumns ? `Size (cell %, ${scene.figureColumns}-up grid)` : 'Size (scene %)'}</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title={scene.figureColumns ? 'How much of this figure’s own grid cell it occupies. The page holds several figures, so the basis is the cell, not the whole scene.' : 'How much of the scene the figure occupies. Everything else follows the fixed layout.'} /></label>
           )}
         </div>
         <footer>
