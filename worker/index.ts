@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers'
 import { mergeMarkdown } from './merge'
+import { normalizeMarkdownWhitespace } from './normalize'
 import { renameMarkdownTitle } from './rename'
 
 interface Env {
@@ -352,7 +353,7 @@ export class DocumentRoom extends DurableObject<Env> {
       const next: DocumentState = {
         ...current,
         title: body.title?.trim() || current.title,
-        markdown: nextMarkdown,
+        markdown: typeof body.markdown === 'string' ? normalizeMarkdownWhitespace(nextMarkdown) : current.markdown,
         presentationConfig: normalizePresentationConfig(body.presentationConfig ?? current.presentationConfig, body.title?.trim() || current.title),
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),
