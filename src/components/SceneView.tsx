@@ -1,12 +1,25 @@
-import { Fragment, useEffect, useId, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import katex from 'katex'
 import type { InlineNode, PresentationBlock, PresentationConfig, Scene } from '../engine/types'
+import { figureCells } from '../engine/planner'
 import { imageFilterCss } from '../imageSyntax'
 
 interface BlockViewProps {
   block: PresentationBlock
   revealIndex?: number
   measurement?: boolean
+  // figure-bg renders the caption in the left text column instead
+  hideCaption?: boolean
+}
+
+// Single source for a figure's caption line: the Fig. number prefix and the
+// caption-with-alt-fallback, shared by the in-figure figcaption and the
+// figure-bg left-column caption.
+function FigureCaption({ block }: { block: PresentationBlock }) {
+  return <>
+    {block.figureNumber !== undefined && <strong className="figure-caption-number">Fig. {block.figureNumber}</strong>}
+    <InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} />
+  </>
 }
 
 function InlineContent({ nodes = [] }: { nodes?: InlineNode[] }) {
@@ -84,6 +97,66 @@ function sceneCitationNumbers(scene: Scene): number[] {
   return [...numbers].sort((left, right) => left - right)
 }
 
+// Publishes the frame area's laid-out height as a pixel CSS variable so sized
+// figure frames get a definite height (see the sized frameStyle in BlockView),
+// and reports the widest image's rendered width — 文字配合圖片寬: captions set
+// their width from it so text always wraps at the image's displayed width.
+function FigureFrameArea({ children, onImageWidth }: { children: ReactNode; onImageWidth?: (width: number | null) => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [areaHeight, setAreaHeight] = useState<number | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const measure = () => {
+      setAreaHeight(element.clientHeight)
+      const images = [...element.querySelectorAll<HTMLElement>('.figure-frame img')]
+      const width = images.length ? Math.max(...images.map((image) => image.getBoundingClientRect().width)) : 0
+      onImageWidth?.(width > 1 ? Math.round(width) : null)
+    }
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    element.querySelectorAll('.figure-frame img').forEach((image) => {
+      observer.observe(image)
+      image.addEventListener('load', measure)
+    })
+    measure()
+    return () => {
+      observer.disconnect()
+      element.querySelectorAll('.figure-frame img').forEach((image) => image.removeEventListener('load', measure))
+    }
+  }, [onImageWidth])
+  return (
+    <div className="figure-frame-area" ref={ref} style={areaHeight ? { '--frame-area-height': `${areaHeight}px` } as CSSProperties : undefined}>
+      {children}
+    </div>
+  )
+}
+
+// Each grid cell owns its own frame-area measurement and its own image width.
+// Sharing SceneView's single figureImageWidth across cells would set every
+// caption to the widest image's width, and --frame-area-height has to be per
+// cell or `size=NN%` resolves against the wrong box.
+function FigureCell({ figure, legend, revealIndex, measurement }: {
+  figure: PresentationBlock
+  legend: PresentationBlock[]
+  revealIndex?: number
+  measurement: boolean
+}) {
+  const [imageWidth, setImageWidth] = useState<number | null>(null)
+  return (
+    <div className="figure-cell" style={imageWidth ? { '--figure-width': `${imageWidth}px` } as CSSProperties : undefined}>
+      <FigureFrameArea onImageWidth={setImageWidth}>
+        <BlockView block={figure} revealIndex={revealIndex} measurement={measurement} />
+      </FigureFrameArea>
+      {legend.length > 0 && (
+        <div className="figure-below-caption">
+          {legend.map((block) => <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function TableCellContent({ value }: { value: string }) {
   const parts = value.split(/(\*\*[^*]+\*\*|~~[^~]+~~|`[^`]+`)/g).filter(Boolean)
   return <>{parts.map((part, index) => {
@@ -144,7 +217,7 @@ function CodeGroup({ block, revealIndex, measurement }: { block: PresentationBlo
   </div>
 }
 
-export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measurement = false }: BlockViewProps) {
+export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measurement = false, hideCaption = false }: BlockViewProps) {
   const common = {
     className: `content-block block-${block.type}${block.continuation ? ' is-continuation' : ''}`,
     'data-block-id': block.id,
@@ -176,17 +249,25 @@ export function BlockView({ block, revealIndex = Number.POSITIVE_INFINITY, measu
       filter: imageFilterCss(block.imageOptions?.filters ?? ''),
       objectFit: block.imageOptions?.fit === 'auto' ? 'scale-down' : 'contain',
     }
-    const frameStyle = block.imageOptions?.height
-      ? { '--figure-height': block.imageOptions.height } as CSSProperties
-      : undefined
+    // `size=NN%` resolves against the frame area (the space left after the
+    // heading and the legend). The area publishes its measured height as a
+    // pixel variable, so the frame height is a definite length — which lets
+    // the image's auto width resolve and the fit-content column truly follow
+    // the figure instead of leaving dead padding when it shrinks.
+    const sized = block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/)
+    const frameStyle = sized
+      ? { '--figure-height': `calc(var(--frame-area-height, 320px) * ${Number(sized[1]) / 100})` } as CSSProperties
+      : block.imageOptions?.height
+        ? { '--figure-height': block.imageOptions.height } as CSSProperties
+        : undefined
     return (
       <figure {...common} data-layout-hint={block.layoutHint} data-background={block.imageOptions?.background || undefined}>
         <div className="figure-frame" style={frameStyle}>
           <img src={block.url} alt={block.alt ?? ''} style={imageStyle} />
-          <span className="figure-index" aria-hidden="true">FIG.</span>
+          <span className="figure-index" aria-hidden="true">{block.figureNumber ? `FIG. ${block.figureNumber}` : 'FIG.'}</span>
         </div>
-        {(block.caption?.length || block.alt) && (
-          <figcaption><InlineContent nodes={block.caption?.length ? block.caption : [{ type: 'text', value: block.alt ?? '' }]} /></figcaption>
+        {!hideCaption && (block.caption?.length || block.alt) && (
+          <figcaption><FigureCaption block={block} /></figcaption>
         )}
       </figure>
     )
@@ -244,7 +325,9 @@ function DebugCard({ scene }: { scene: Scene }) {
     <aside className="debug-card" aria-label="Planner score breakdown">
       <div className="debug-title"><span>Planner trace</span><strong>{scene.score}</strong></div>
       {rows.map(([label, value]) => <div className="debug-row" key={label}><span>{label}</span><span>{value}</span></div>)}
-      <div className="debug-source">L{scene.sourceRange.startLine}–{scene.sourceRange.endLine} · {scene.layout}</div>
+      {/* `figure` covers two structurally different height models; without the
+          column count there is no way to tell from the trace which one ran. */}
+      <div className="debug-source">L{scene.sourceRange.startLine}–{scene.sourceRange.endLine} · {scene.layout}{scene.figureColumns ? ` grid ×${scene.figureColumns}` : ''}</div>
     </aside>
   )
 }
@@ -270,22 +353,21 @@ interface SceneViewProps {
 export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revealIndex, measurement = false, navigationLabels = [], activeNavigationLabel, onNavigateLabel, presentationConfig, citationReferences }: SceneViewProps) {
   const heading = scene.blocks.find((block) => block.type === 'heading')
   const content = scene.blocks.filter((block) => block !== heading)
-  const figures = content.filter((block) => block.type === 'figure')
-  const backgroundFigure = figures.find((block) => block.imageOptions?.background && block.layoutHint !== 'legend')
-  const visibleFigures = figures.filter((block) => block !== backgroundFigure)
-  const prose = content.filter((block) => block.type !== 'figure')
+  // One rule, shared with the planner: prose before the first figure is body
+  // copy, and the prose after a figure is that figure's legend.
+  const { bodyText, cells } = figureCells(scene.blocks)
+  const isGallery = scene.layout === 'figure' && cells.length > 1
+  const visibleFigures = cells.map((cell) => cell.figure)
+  const aboveProse = bodyText
+  // The bg panel takes every figure, so the left column carries all the prose:
+  // the body copy plus every figure's legend, in document order.
+  const bgProse = content.filter((block) => block.type !== 'figure')
+  const belowProse = cells[0]?.legend ?? []
+  const [figureImageWidth, setFigureImageWidth] = useState<number | null>(null)
+  useEffect(() => setFigureImageWidth(null), [scene.id])
   const sceneReferences = sceneCitationNumbers(scene)
     .map((number) => ({ number, content: citationReferences?.get(number) }))
     .filter((entry): entry is { number: number; content: InlineNode[] } => Boolean(entry.content))
-  const backgroundStyle = backgroundFigure ? {
-    backgroundImage: `url(${JSON.stringify(backgroundFigure.url ?? '').slice(1, -1)})`,
-    // Background figures follow the same no-crop rule as inline figures.
-    backgroundSize: 'contain',
-    backgroundPosition: 'center',
-    backgroundRepeat: 'no-repeat',
-    filter: imageFilterCss(backgroundFigure.imageOptions?.filters ?? ''),
-    '--scene-bg-split': backgroundFigure.imageOptions?.splitSize || '50%',
-  } as CSSProperties : undefined
 
   const renderBlocks = (blocks: PresentationBlock[]) => blocks.map((block) => (
     <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} />
@@ -332,8 +414,7 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
   }
 
   return (
-    <article className={`scene scene-${scene.layout}${backgroundFigure ? ` has-background background-${backgroundFigure.imageOptions?.side ?? 'none'}` : ''}${sceneReferences.length ? ' has-citations' : ''}`} data-layout={scene.layout} data-scene-id={scene.id} data-presentation-theme={presentationConfig.theme}>
-      {backgroundFigure && <div className="scene-background-image" style={backgroundStyle} role="img" aria-label={backgroundFigure.alt ?? ''} />}
+    <article className={`scene scene-${scene.layout}${sceneReferences.length ? ' has-citations' : ''}`} data-layout={scene.layout} data-scene-id={scene.id} data-presentation-theme={presentationConfig.theme}>
       {navigationLabels.length > 0 && (
         <nav className="scene-section-nav" aria-label="Document sections">
           {navigationLabels.slice(0, 7).map((label) => (
@@ -344,27 +425,52 @@ export function SceneView({ scene, sceneNumber, sceneCount, debug = false, revea
       {scene.breadcrumb && <div className="scene-breadcrumb">{scene.breadcrumb}</div>}
       <div className="scene-content">
         {scene.continuationLabel && <div className="continuation-label">{scene.continuationLabel}</div>}
-        {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
+        {heading && scene.layout !== 'figure-bg' && <div className="scene-heading">{renderBlocks([heading])}</div>}
 
-        {scene.layout === 'legend' ? (
-          <div className="legend-grid">
-            <div className="legend-media">{renderBlocks(visibleFigures)}</div>
-            <div className="legend-copy">
-              {renderBlocks(prose)}
-              {visibleFigures.some((figure) => figure.caption?.length || figure.alt) && <div className="legend-caption">
-                {visibleFigures.map((figure) => (figure.caption?.length || figure.alt) && <p key={`${figure.id}-caption`}><InlineContent nodes={figure.caption?.length ? figure.caption : [{ type: 'text', value: figure.alt ?? '' }]} /></p>)}
-              </div>}
+        {scene.layout === 'figure-bg' ? (
+          // design v5.1: the bg figure spans the full content height — top edge
+          // right under the chrome strip — and bleeds to the right and bottom
+          // edges. Everything textual (heading, body copy, legend paragraphs,
+          // and the figures' own captions) lives in the left column.
+          <div className="figure-bg-grid">
+            <div className="figure-bg-left">
+              {heading && <div className="scene-heading">{renderBlocks([heading])}</div>}
+              <div className="figure-bg-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
+                {renderBlocks(bgProse)}
+                {visibleFigures.filter((block) => block.caption?.length || block.alt).map((block) => (
+                  <p className="figure-bg-caption" key={`${block.id}-caption`}><FigureCaption block={block} /></p>
+                ))}
+              </div>
+            </div>
+            <div className="figure-bg-panel">
+              {visibleFigures.map((block) => <BlockView key={block.id} block={block} revealIndex={revealIndex} measurement={measurement} hideCaption />)}
             </div>
           </div>
-        ) : scene.layout === 'text-media' ? (
-          <div className="text-media-grid">
-            <div className="prose-column">{renderBlocks(prose)}</div>
-            <div className="media-column">{renderBlocks(visibleFigures)}</div>
+        ) : isGallery ? (
+          // Two or more figures: the body text is a full-width row above a
+          // balanced grid, and every figure carries its own legend.
+          <div className="figure-gallery" style={{ '--figure-cols': scene.figureColumns ?? 2 } as CSSProperties}>
+            {!!bodyText.length && (
+              <div className="figure-gallery-text" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>
+                {renderBlocks(bodyText)}
+              </div>
+            )}
+            <div className="figure-gallery-grid">
+              {cells.map((cell) => (
+                <FigureCell key={cell.figure.id} figure={cell.figure} legend={cell.legend} revealIndex={revealIndex} measurement={measurement} />
+              ))}
+            </div>
           </div>
-        ) : scene.layout === 'media-dominant' ? (
-          <div className="media-dominant-grid">
-            <div className="media-column">{renderBlocks(visibleFigures)}</div>
-            {!!prose.length && <div className="prose-column">{renderBlocks(prose)}</div>}
+        ) : scene.layout === 'figure' ? (
+          // Position decides the text's role: paragraphs above the figure are
+          // body copy in the right column, paragraphs below it are the legend
+          // under the image (design v5).
+          <div className={`figure-grid${aboveProse.length ? '' : ' is-figure-only'}`}>
+            <div className="figure-col" style={figureImageWidth ? { '--figure-width': `${figureImageWidth}px` } as CSSProperties : undefined}>
+              <FigureFrameArea onImageWidth={setFigureImageWidth}>{renderBlocks(visibleFigures)}</FigureFrameArea>
+              {!!belowProse.length && <div className="figure-below-caption">{renderBlocks(belowProse)}</div>}
+            </div>
+            {!!aboveProse.length && <div className="figure-text-col" style={scene.figureTextScale ? { '--figure-text-scale': scene.figureTextScale } as CSSProperties : undefined}>{renderBlocks(aboveProse)}</div>}
           </div>
         ) : (
           <div className="prose-flow">{renderBlocks(content)}</div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, LoaderCircle, RefreshCw, X } from 'lucide-react'
+import { ArrowDownToLine, ArrowUpFromLine, ExternalLink, LoaderCircle, RefreshCw, Unlink, X } from 'lucide-react'
 import type { PresentationConfig } from '../engine/types'
+import { useModalFocus } from '../app/useModalFocus'
 
 interface SyncedDocument {
   id: string
@@ -15,7 +16,7 @@ interface SyncedDocument {
 }
 
 interface HackMDResult {
-  direction?: 'created' | 'pull' | 'push'
+  direction?: 'created' | 'pull' | 'push' | 'unlink'
   note?: { id: string; title: string; publishLink?: string | null }
   document?: SyncedDocument
   error?: string
@@ -23,10 +24,11 @@ interface HackMDResult {
 }
 
 export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose }: { documentId: string; onDocument: (document: SyncedDocument) => void; onBusyChange?: (busy: boolean) => void; onClose: () => void }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const [noteId, setNoteId] = useState('')
   const [connected, setConnected] = useState(false)
   const [accountName, setAccountName] = useState('HackMD')
-  const [busy, setBusy] = useState<'sync' | 'pull' | 'push' | null>(null)
+  const [busy, setBusy] = useState<'sync' | 'pull' | 'push' | 'unlink' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -77,10 +79,33 @@ export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose
     }
   }
 
+  const unlink = async () => {
+    setBusy('unlink')
+    setMessage(null)
+    setError(null)
+    try {
+      const response = await fetch(`/api/documents/${encodeURIComponent(documentId)}/hackmd`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unlink' }),
+      })
+      const result = await response.json() as HackMDResult
+      if (!response.ok) throw new Error(result.error || 'Could not unlink')
+      if (result.document) onDocument(result.document)
+      setNoteId('')
+      setConnected(false)
+      setMessage('Unlinked. The HackMD note itself was not deleted.')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not unlink')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const openNoteId = noteId.trim().split('/').filter(Boolean).at(-1)
 
-  return <div className="hackmd-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-    <section className="hackmd-dialog" role="dialog" aria-modal="true" aria-labelledby="hackmd-title">
+  return <div className="hackmd-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <dialog open ref={dialogRef} className="hackmd-dialog" aria-modal="true" aria-labelledby="hackmd-title">
       <header><div><span className="hackmd-mark">H</span><div><small>Integration</small><h2 id="hackmd-title">Sync with HackMD</h2></div></div><button onClick={onClose} aria-label="Close HackMD sync"><X size={18} /></button></header>
       <div className="hackmd-body">
         <p>Keep this Markdown document linked to one HackMD note. Smart sync uses the last successful sync to choose a direction and stops if both copies changed.</p>
@@ -92,11 +117,12 @@ export function HackMDSyncDialog({ documentId, onDocument, onBusyChange, onClose
       <footer>
         <div>{connected ? <><span className="sync-dot" /> Linked · {accountName}</> : `Connected as ${accountName}`}</div>
         <div>
+          {connected && <button className="hackmd-unlink" onClick={() => void unlink()} disabled={Boolean(busy)} aria-label="Unlink this document from HackMD">{busy === 'unlink' ? <LoaderCircle className="is-spinning" size={15} /> : <Unlink size={15} />} Unlink</button>}
           {!!noteId.trim() && <button onClick={() => void synchronize('pull')} disabled={Boolean(busy)}>{busy === 'pull' ? <LoaderCircle className="is-spinning" size={15} /> : <ArrowDownToLine size={15} />} Pull</button>}
           {!!noteId.trim() && <button onClick={() => void synchronize('push')} disabled={Boolean(busy)}>{busy === 'push' ? <LoaderCircle className="is-spinning" size={15} /> : <ArrowUpFromLine size={15} />} Push</button>}
           <button className="hackmd-primary" onClick={() => void synchronize('sync')} disabled={Boolean(busy)} aria-busy={busy === 'sync'}><RefreshCw className={`sync-rotation-icon${busy === 'sync' ? ' is-spinning' : ''}`} size={15} /> {noteId.trim() ? 'Smart sync' : 'Create & sync'}</button>
         </div>
       </footer>
-    </section>
+    </dialog>
   </div>
 }

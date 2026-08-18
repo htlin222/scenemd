@@ -7,6 +7,7 @@ import {
   parseOpenEvidenceConversation,
   type OpenEvidenceConversation,
 } from '../lib/openevidence'
+import { useModalFocus } from '../app/useModalFocus'
 
 interface OpenEvidenceImportDialogProps {
   onClose: () => void
@@ -14,6 +15,7 @@ interface OpenEvidenceImportDialogProps {
 }
 
 export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImportDialogProps) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const inputRef = useRef<HTMLInputElement>(null)
   const [url, setUrl] = useState('')
   const [conversation, setConversation] = useState<OpenEvidenceConversation | null>(null)
@@ -80,8 +82,8 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
   }
 
   return createPortal(
-    <div className="oe-import-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="oe-import-dialog" role="dialog" aria-modal="true" aria-labelledby="oe-import-title">
+    <div className="oe-import-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <dialog open ref={dialogRef} className="oe-import-dialog" aria-modal="true" aria-labelledby="oe-import-title">
         <header>
           <div>
             <span className="oe-mark" aria-hidden="true">O</span>
@@ -119,7 +121,7 @@ export function OpenEvidenceImportDialog({ onClose, onInsert }: OpenEvidenceImpo
           <span>{conversation ? `${selected.size} selected` : 'Only public links can be read'}</span>
           <button className="oe-insert-button" disabled={!conversation || !selected.size || inserting} onClick={() => void insertSelected()}>{inserting ? <><LoaderCircle className="is-spinning" size={15} /> Formatting AMA…</> : 'Insert into document'}</button>
         </footer>
-      </section>
+      </dialog>
     </div>,
     document.body,
   )

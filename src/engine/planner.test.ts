@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { buildSemanticRegions, parsePresentationDocument } from './semantics'
-import { chooseLayout, planScenes, withPresentationCover } from './planner'
+import { chooseLayout, figureCells, figureGridShape, planScenes, withPresentationCover } from './planner'
 import { defaultPresentationConfig } from '../presentationConfig'
+import { parseImageAttributes } from '../imageSyntax'
 import type { PresentationBlock, SemanticRegion } from './types'
 
 // Pagination depends on measured heights, so these tests supply an explicit
@@ -34,6 +35,299 @@ const plannedBlockIds = (scenes: { blocks: PresentationBlock[] }[]) =>
     .map((block) => block.id.replace(/-part-\d+$/, ''))
     .filter((id, index, list) => list.indexOf(id) === index)
     .sort()
+
+describe('figureCells — legend ownership', () => {
+  it('treats everything before the first figure as body text', () => {
+    const { blocks } = regionsFrom('## Title\n\n開場說明。\n\n![a](a.png)\n')
+    const { bodyText, cells } = figureCells(blocks)
+
+    expect(bodyText.map((block) => block.type)).toEqual(['paragraph'])
+    expect(cells).toHaveLength(1)
+    expect(cells[0].legend).toEqual([])
+  })
+
+  it('gives each figure the paragraphs that immediately follow it', () => {
+    // Position decides the role: the run of prose after a figure is that
+    // figure's legend, and the next figure ends the run.
+    const { blocks } = regionsFrom('內文。\n\n![a](a.png)\n\n左圖說明。\n\n![b](b.png)\n\n右圖說明。\n')
+    const { bodyText, cells } = figureCells(blocks)
+
+    expect(bodyText).toHaveLength(1)
+    expect(cells).toHaveLength(2)
+    expect(cells[0].legend).toHaveLength(1)
+    expect(cells[0].legend[0].inlines?.[0]).toMatchObject({ value: '左圖說明。' })
+    expect(cells[1].legend[0].inlines?.[0]).toMatchObject({ value: '右圖說明。' })
+  })
+
+  it('ignores headings and reports no cells for a figureless scene', () => {
+    const { blocks } = regionsFrom('## Title\n\n只有文字。\n')
+    const { bodyText, cells } = figureCells(blocks)
+
+    expect(cells).toEqual([])
+    expect(bodyText.map((block) => block.type)).toEqual(['paragraph'])
+  })
+})
+
+describe('figureGridShape — balanced grid, three columns max', () => {
+  it.each([
+    [1, { rows: 1, columns: 1 }],
+    [2, { rows: 1, columns: 2 }],
+    [3, { rows: 1, columns: 3 }],
+    // Four is a quadrant, not a 3 + 1 orphan — that is what balancing buys.
+    [4, { rows: 2, columns: 2 }],
+    [5, { rows: 2, columns: 3 }],
+    [6, { rows: 2, columns: 3 }],
+    [7, { rows: 3, columns: 3 }],
+  ])('lays %i figures out as %o', (count, expected) => {
+    expect(figureGridShape(count)).toEqual(expected)
+  })
+})
+
+describe('planScenes — sized figures', () => {
+  it('computes a sized figure from the viewport and keeps the following paragraph on its scene', () => {
+    // design v2: `size=NN%` figures are pure arithmetic — a stale or absurd DOM
+    // measurement must not strand the grouped paragraph onto the next scene.
+    const { blocks, regions } = regionsFrom(
+      '## Renal function\n\n<!-- present: group -->\n![chart](fig.png){size=45%} 圖一：說明\n\nA paragraph below the figure.\n<!-- present: end-group -->\n',
+    )
+    const shortViewport = 430
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : block.type === 'heading' ? 76 : 60))
+    const plan = planScenes(regions, measurements, shortViewport, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plannedBlockIds(plan.scenes)).toEqual(allBlockIds(blocks))
+  })
+})
+
+describe('planScenes — explicit groups', () => {
+  // `---` cuts the figure page off from the free paragraphs (design v5).
+  const GROUPED = '<!-- present: group -->\n![chart](fig.png){size=45%} 圖說\n\n重點一\n\n重點二\n<!-- present: end-group -->\n\n---\n\n自由段落甲。\n\n自由段落乙。\n'
+
+  it('never splits a present: group across scenes', () => {
+    const { blocks, regions } = regionsFrom(GROUPED)
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 150))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+    const groupScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'figure'))
+
+    expect(groupScene?.blocks.map((block) => block.type)).toEqual(['figure', 'paragraph', 'paragraph'])
+  })
+
+  it('keeps an overflowing group whole and flags the scene', () => {
+    const { blocks, regions } = regionsFrom(GROUPED)
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 330))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+    const groupScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'figure'))
+
+    expect(groupScene?.blocks).toHaveLength(3)
+    expect(groupScene?.fillRatio).toBeGreaterThan(1)
+    expect(groupScene?.warning).toBeTruthy()
+    expect(plan.overflowCount).toBeGreaterThan(0)
+  })
+})
+
+describe('planScenes — full-bleed figures', () => {
+  it('measures size against the height remaining after the heading', () => {
+    // design v5: with an H2 on the scene, size=100% means the space left
+    // under the heading — the scene fills exactly, no overflow warning.
+    const { blocks, regions } = regionsFrom('## Title\n\n![chart](fig.png){size=100%} 圖說\n')
+    const plan = planScenes(regions, measure(blocks, (b) => (b.type === 'heading' ? 76 : 300)), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure')
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('lets a lone size=100% figure fill a scene without an overflow warning', () => {
+    // The warning the author saw: size was measured against the full stage
+    // while the budget is the content area, so ≥84% always overflowed.
+    const { blocks, regions } = regionsFrom('![chart](fig.png){size=100%} 圖說\n')
+    const plan = planScenes(regions, measure(blocks, 300), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.overflowCount).toBe(0)
+  })
+})
+
+describe('planScenes — bg figures', () => {
+  // design v5.1: a `{bg}` figure renders as a full-height right-bleed panel.
+  // It lives outside the text flow, so it costs the vertical budget nothing;
+  // the scene's height is the heading plus the left text column alone.
+  it('chooses the figure-bg layout when a figure carries the bg flag', () => {
+    const { blocks, regions } = regionsFrom('## Title\n\n正文段落。\n\n![chart](fig.png){bg}\n\n圖說。\n')
+    const plan = planScenes(regions, measure(blocks, (block) => (block.type === 'heading' ? 76 : 60)), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure-bg')
+  })
+
+  it('gives a bg figure zero height budget — a giant measurement cannot overflow the scene', () => {
+    const { blocks, regions } = regionsFrom('## Title\n\n正文段落。\n\n![chart](fig.png){bg}\n')
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 800 : block.type === 'heading' ? 76 : 60))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.overflowCount).toBe(0)
+  })
+
+  it('scales the left column when its text outgrows the scene', () => {
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![chart](fig.png){bg}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 180 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
+  })
+})
+
+describe('planScenes — above-figure text shrinks to fit', () => {
+  it('scales oversized body text instead of pushing it off the figure page', () => {
+    // "你可以縮小文字，總之塞就對了" — above-figure prose shrinks (floor 0.6)
+    // so the author-delimited figure page holds.
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![chart](fig.png){size=45%}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 500 : block.type === 'figure' ? 280 : 60))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
+  })
+})
+
+describe('planScenes — multi-figure grid', () => {
+  const sizedFigures = (count: number) =>
+    Array.from({ length: count }, (_, index) => `![f${index}](f${index}.png){size=80%}`).join('\n\n')
+
+  it('fits two sized figures on one scene without an overflow warning', () => {
+    const { blocks, regions } = regionsFrom(
+      '## 對照\n\n本頁比較治療前後。\n\n![a](a.png){size=80%}\n\n圖一：治療前。\n\n![b](b.png){size=80%}\n\n圖二：治療後。\n',
+    )
+    const measurements = measure(blocks, (block) => (block.type === 'heading' ? 76 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure')
+    expect(plan.scenes[0].figureColumns).toBe(2)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('leaves a single figure on the v5 layout with no column count', () => {
+    // Regression fence: one figure must behave exactly as before.
+    const { blocks, regions } = regionsFrom('## 標題\n\n內文。\n\n![a](a.png){size=80%}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'heading' ? 76 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    expect(plan.scenes[0].figureColumns).toBeUndefined()
+  })
+
+  it.each([2, 3, 4, 5, 6])('packs %i figures onto one scene', (count) => {
+    // Sized figures share the grid rather than stacking, so up to the cap they
+    // all fit on the page the author wrote them on.
+    const { blocks, regions } = regionsFrom(sizedFigures(count))
+    const plan = planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].blocks.filter((block) => block.type === 'figure')).toHaveLength(count)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('costs a second row of figures more than a second column', () => {
+    // Four figures need two rows, three need one — the height model must
+    // reflect that or the planner cannot tell the two apart.
+    const fillFor = (count: number) => {
+      const { blocks, regions } = regionsFrom(sizedFigures(count))
+      return planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced').scenes[0].fillRatio
+    }
+
+    expect(fillFor(4)).toBeGreaterThan(fillFor(3))
+  })
+
+  it('breaks a run of seven figures rather than shrinking them further', () => {
+    const { blocks, regions } = regionsFrom(sizedFigures(7))
+    const plan = planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced')
+
+    expect(plan.scenes.length).toBeGreaterThan(1)
+    for (const scene of plan.scenes) {
+      expect(scene.blocks.filter((block) => block.type === 'figure').length).toBeLessThanOrEqual(6)
+    }
+  })
+
+  it('prefers legend heights measured at cell width over the × columns guess', () => {
+    // The fallback charges a short legend `columns` times even though it still
+    // fits one line in its column. Real measurements say otherwise, and the
+    // planner must believe them — the screenshots showed six single-line
+    // legends being budgeted as three lines each.
+    const { blocks, regions } = regionsFrom(
+      '![a](a.png){size=80%}\n\n甲說明。\n\n![b](b.png){size=80%}\n\n乙說明。\n\n![c](c.png){size=80%}\n\n丙說明。\n',
+    )
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 280 : 30))
+    const guessed = planScenes(regions, measurements, VIEWPORT, 'balanced').scenes[0]
+
+    // Measured at a third of the width these legends still take one line.
+    const atThree = new Map(blocks.filter((block) => block.type === 'paragraph').map((block) => [block.id, 30]))
+    const measured = planScenes(regions, measurements, VIEWPORT, 'balanced', undefined, new Map([[3, atThree]])).scenes[0]
+
+    expect(measured.fillRatio).toBeLessThan(guessed.fillRatio)
+  })
+
+  it('says what actually went wrong when a group pins more than six figures', () => {
+    // The cap is not a height overflow. Folding it into usedHeight made the
+    // warning quote a fabricated percentage ("overflows by 84%") for a grid
+    // whose real height fits.
+    const { blocks, regions } = regionsFrom(`<!-- present: group -->\n${sizedFigures(7)}\n<!-- present: end-group -->\n`)
+    const scene = planScenes(regions, measure(blocks, 280), VIEWPORT, 'balanced').scenes[0]
+
+    expect(scene.blocks.filter((block) => block.type === 'figure')).toHaveLength(7)
+    expect(scene.warning).toBe('A scene holds at most 6 figures; this one is pinned to 7')
+    expect(scene.fillRatio).toBeLessThanOrEqual(1)
+  })
+
+  it('never reports an overflow of zero percent', () => {
+    // Math.round on a hairline overflow produced "Content overflows this
+    // scene by 0%", which reads as a bug report about nothing.
+    const { blocks, regions } = regionsFrom('<!-- present: group -->\n段落一。\n\n段落二。\n<!-- present: end-group -->\n')
+    const plan = planScenes(regions, measure(blocks, 421), VIEWPORT, 'balanced')
+
+    for (const scene of plan.scenes) expect(scene.warning ?? '').not.toContain(' 0%')
+  })
+
+  it('shrinks the body-text row before giving up on a two-figure page', () => {
+    const { blocks, regions } = regionsFrom(
+      '<!-- present: group -->\n大量內文段落。\n\n![a](a.png){size=70%}\n\n![b](b.png){size=70%}\n<!-- present: end-group -->\n',
+    )
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' ? 700 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    // Asserting the scale alone is not enough: the point of shrinking is that
+    // the page then FITS. An earlier one-pass correction produced a scale of
+    // 0.96 on this input and still overflowed to 1.002.
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+  })
+
+  it('breaks rather than reporting a scale that does not rescue the page', () => {
+    // Text so tall that even the 0.6 floor cannot fit it beside two figures:
+    // the scene must break instead of claiming a scale and overflowing anyway.
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![a](a.png){size=70%}\n\n![b](b.png){size=70%}\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' ? 2000 : 280))
+    const plan = planScenes(regions, measurements, VIEWPORT, 'balanced')
+
+    for (const scene of plan.scenes) {
+      if (scene.blocks.length > 1) expect(scene.fillRatio).toBeLessThanOrEqual(1)
+    }
+  })
+})
 
 describe('planScenes — fit test', () => {
   it('emits one scene for a region that fits comfortably', () => {
@@ -88,13 +382,14 @@ describe('planScenes — fit test', () => {
 
 describe('planScenes — invariants from spec.md', () => {
   it('never separates a figure from the prose bound to it', () => {
-    // spec critical invariant: "split image-caption pairs = 0"
+    // spec critical invariant: "split image-caption pairs = 0". Since design
+    // v3, prose is bound to a figure explicitly via present: group markers.
     const markdown = [
       '## Section',
       ...Array.from({ length: 4 }, (_, i) => `Filler ${i}.`),
-      'Lead-in prose.',
+      '<!-- present: group -->\n\nLead-in prose.',
       '![Figure](f.png)',
-      'Explanatory copy.',
+      'Explanatory copy.\n\n<!-- present: end-group -->',
     ].join('\n\n')
     const { blocks, regions } = regionsFrom(`${markdown}\n`)
     const plan = planScenes(regions, measure(blocks, 150), VIEWPORT, 'balanced')
@@ -230,16 +525,25 @@ describe('chooseLayout', () => {
     expect(chooseLayout([block({ type: 'blockquote' })])).toBe('statement')
   })
 
-  it('chooses legend for the default figure composition', () => {
-    // The normalizer makes `legend` the default hint for images, so an
-    // ordinary figure with prose lands here rather than in text-media.
-    const scene = [block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })]
-    expect(chooseLayout(scene)).toBe('legend')
+  it('chooses the single figure layout for any composition containing a figure', () => {
+    // design v5: figure scenes have exactly one structure — optional heading,
+    // then figure left / text right. No legend, text-media, or media-dominant.
+    expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })])).toBe('figure')
+    expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })])).toBe('figure')
+    expect(chooseLayout([block({ id: 'f', type: 'figure' })])).toBe('figure')
   })
 
-  it('chooses media-dominant for a hero figure', () => {
-    const scene = [block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })]
-    expect(chooseLayout(scene)).toBe('media-dominant')
+  it('chooses figure-bg when any figure carries the bg flag', () => {
+    const bgOptions = parseImageAttributes('alt', 'bg')
+    expect(chooseLayout([block({ id: 'f', type: 'figure', imageOptions: bgOptions }), block({ id: 'p' })])).toBe('figure-bg')
+  })
+
+  it('lets figure-bg outrank statement — blockHeight prices bg figures at zero, which only the bleed panel honors', () => {
+    const bgOptions = parseImageAttributes('alt', 'bg')
+    expect(chooseLayout([
+      block({ id: 'q', type: 'blockquote', layoutHint: 'statement' }),
+      block({ id: 'f', type: 'figure', imageOptions: bgOptions }),
+    ])).toBe('figure-bg')
   })
 
   it('chooses text when there is no media', () => {
@@ -284,5 +588,64 @@ describe('withPresentationCover', () => {
 
     expect(a).toBe(b)
     expect(a).not.toBe(c)
+  })
+})
+
+describe('relaxOversizedChains via planScenes (#31)', () => {
+  // These exercise the constraint-relaxation pass through the public API:
+  // chains measured taller than capacity must yield to feasible boundaries
+  // without ever cutting a figure from its only prose.
+
+  it('splits an oversized figure chain at shared prose, keeping pairs whole', () => {
+    // heading + lead + figure + shared prose + figure: the whole chain cannot
+    // fit, but [heading lead figure] and [shared figure] both can.
+    const markdown = '## Site\n\nLead prose.\n\n![One](a.png)\n\nShared prose.\n\n![Two](b.png)\n'
+    const { blocks, regions } = regionsFrom(markdown)
+    const heights = measure(blocks, (block) => (block.type === 'figure' ? 280 : block.type === 'heading' ? 76 : 56))
+    const plan = planScenes(regions, heights, 768, 'balanced')
+
+    expect(plan.overflowCount).toBe(0)
+    // The bound pair (first figure + its legend) must land on one scene; the
+    // relaxation may only break links the normalizer left unbound.
+    const figures = blocks.filter((block) => block.type === 'figure')
+    const legend = blocks[blocks.indexOf(figures[0]) + 1]
+    expect(legend.keepWithPrevious).toBe(true)
+    const sceneWithFigure = plan.scenes.find((scene) => scene.blocks.some((block) => block.id === figures[0].id))!
+    expect(sceneWithFigure.blocks.some((block) => block.id === legend.id)).toBe(true)
+    // And no scene ends on a still-bound block.
+    for (const scene of plan.scenes) {
+      const last = scene.blocks.at(-1)!
+      const lastIndexInRegion = regions[0].blocks.findIndex((block) => block.id === last.id)
+      const isRegionEnd = lastIndexInRegion === regions[0].blocks.length - 1
+      if (!isRegionEnd) expect(last.keepWithNext && !last.continuation).toBe(false)
+    }
+  })
+
+  it('rescues a heading glued to a code block that fits alone but not together', () => {
+    const code = Array.from({ length: 24 }, (_, i) => `line ${i}`).join('\n')
+    const markdown = `## Build\n\n\`\`\`bash\n${code}\n\`\`\`\n`
+    const { blocks, regions } = regionsFrom(markdown)
+    const codeBlock = blocks.find((block) => block.type === 'code')!
+    // Code alone fits (620 < 645 capacity at 768); heading + code does not.
+    const heights = measure(blocks, (block) => (block.id === codeBlock.id ? 620 : 76))
+    const plan = planScenes(regions, heights, 768, 'balanced')
+
+    expect(plan.overflowCount).toBe(0)
+    // The heading must not be orphaned: its scene also carries code.
+    const headingScene = plan.scenes.find((scene) => scene.blocks.some((block) => block.type === 'heading'))!
+    expect(headingScene.blocks.some((block) => block.type === 'code')).toBe(true)
+    // And the code arrives in continuation parts rather than overflowing.
+    const codeParts = plan.scenes.flatMap((scene) => scene.blocks).filter((block) => block.type === 'code')
+    expect(codeParts.length).toBeGreaterThan(1)
+  })
+
+  it('leaves satisfiable chains exactly alone', () => {
+    const markdown = '## Section\n\nLead prose.\n\n![One](a.png)\n\nLegend prose.\n'
+    const { blocks, regions } = regionsFrom(markdown)
+    const heights = measure(blocks, 60)
+    const plan = planScenes(regions, heights, 1080, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.overflowCount).toBe(0)
   })
 })

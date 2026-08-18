@@ -9,9 +9,17 @@
  */
 
 .scene {
+  /* Content insets — single source; the figure-bg bleed negates these, so
+     every variant (e.g. has-citations) must override the variable, not
+     .scene-content directly. */
+  --scene-inset-top: 4.688cqw;
+  --scene-inset-x: 5.729cqw;
+  --scene-inset-bottom: 5.5cqw;
+  --scene-nav-height: 1.875cqw;
   --template-teal: #3d6869;
   --template-text: #111;
-  --template-muted: #999;
+  /* AA: 4.78:1 on #fff (was #999 at 2.85:1) */
+  --template-muted: #6e746f;
   --template-faint: #b0b0b0;
   --template-line: #e0e0e0;
   --template-callout: #ecedef;
@@ -41,7 +49,8 @@
 .scene[data-presentation-theme='editorial'] {
   --template-teal: #9a3412;
   --template-text: #2f2923;
-  --template-muted: #7c6f64;
+  /* AA: 4.61:1 on #f7f1e8 (was #7c6f64 at 4.33:1) */
+  --template-muted: #776b60;
   --template-faint: #a89a8e;
   --template-line: #d9cfc2;
   --template-callout: #eee4d7;
@@ -61,7 +70,8 @@
 .scene[data-presentation-theme='catppuccin'] {
   --template-teal: #8839ef;
   --template-text: #4c4f69;
-  --template-muted: #6c6f85;
+  /* Latte subtext1 — AA 5.53:1 (subtext0 #6c6f85 was 4.37:1) */
+  --template-muted: #5c5f77;
   --template-faint: #9ca0b0;
   --template-line: #ccd0da;
   --template-callout: #e6e9ef;
@@ -120,14 +130,14 @@
 .scene-content {
   position: absolute;
   z-index: 2;
-  inset: 4.688cqw 5.729cqw 5.5cqw;
+  inset: var(--scene-inset-top) var(--scene-inset-x) var(--scene-inset-bottom);
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
   min-width: 0;
   min-height: 0;
 }
-.scene.has-citations .scene-content { bottom: 10cqw; }
+.scene.has-citations { --scene-inset-bottom: 10cqw; }
 .scene-citations {
   position: absolute;
   z-index: 20;
@@ -203,7 +213,7 @@
   position: absolute;
   z-index: 100;
   inset: 0 0 auto;
-  height: 1.875cqw;
+  height: var(--scene-nav-height);
   min-height: 10px;
   display: flex;
   align-items: stretch;
@@ -314,36 +324,94 @@
 .scene-chapter-list li.is-active button strong { font-size: 3.542cqw; font-weight: 700; line-height: 1.1; }
 
 /* Content composition. */
-.text-media-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 0.92fr); gap: 4cqw; align-items: start; min-width: 0; min-height: 0; }
-.media-dominant-grid { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 0.45fr); gap: 3.5cqw; align-items: start; min-width: 0; min-height: 0; }
-.legend-grid {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-  gap: 3.25cqw;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  min-height: 0;
-}
-.legend-media,
-.legend-copy { min-width: 0; min-height: 0; }
-.legend-media { display: flex; align-items: center; justify-content: center; }
-.legend-media .block-figure { width: 100%; }
-.legend-media .figure-frame { height: var(--figure-height, 31cqw); max-height: 32cqw; aspect-ratio: auto; background: transparent; }
-.legend-media figcaption { display: none; }
-.legend-copy { display: flex; flex-direction: column; justify-content: center; gap: 1.05cqw; }
-.legend-copy > p { margin: 0; }
-.legend-caption { margin-top: 0.55cqw; padding-top: 0.8cqw; color: var(--template-muted); border-top: 1px solid var(--template-line); }
-.legend-caption p { margin: 0; color: inherit; font-size: 1.25cqw; line-height: 1.35; }
-.media-column { min-width: 0; }
+/* design v5: every figure scene has one structure — optional heading, then
+   figure left / text right. The figure column height is exactly the space
+   under the heading, so `size=NN%` on the frame resolves against it and the
+   frame flex-shrinks to leave room for the caption at 100%. */
+.figure-grid { flex: 1; display: grid; grid-template-columns: fit-content(100%) minmax(0, 1fr); gap: 3cqw; align-items: stretch; min-width: 0; min-height: 0; }
+.figure-grid.is-figure-only { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+.figure-col { display: flex; flex-direction: column; justify-content: center; gap: 1cqw; min-width: 0; min-height: 0; }
+/* The legend below is mandated space; the frame area is what remains, and
+   size=NN% resolves against it — so 100% always fits exactly. */
+.figure-frame-area { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
+.figure-col .block-figure, .figure-cell .block-figure { height: 100%; display: flex; flex-direction: column; justify-content: center; min-height: 0; min-width: 0; }
+.figure-col .figure-frame, .figure-cell .figure-frame { width: auto; height: var(--figure-height, 60%); max-height: 100%; min-height: calc(var(--figure-height, 60%) * 0.75); flex: 0 1 auto; aspect-ratio: auto; background: transparent; }
+.figure-col .figure-frame img, .figure-cell .figure-frame img { width: auto; height: 100%; max-width: 100%; margin: 0 auto; object-fit: contain; }
+/* 文字配合圖片寬: captions take the image's measured display width, so long
+   legends wrap under the image instead of stretching the column. */
+.figure-col figcaption, .figure-cell figcaption { flex: 0 0 auto; width: var(--figure-width, auto); max-width: 100%; margin-right: auto; margin-left: auto; overflow-wrap: break-word; }
+.figure-below-caption { flex: 0 0 auto; display: flex; flex-direction: column; gap: 0.4cqw; padding-top: 0.7cqw; border-top: 1px solid var(--template-line); width: var(--figure-width, auto); max-width: 100%; margin: 0 auto; overflow-wrap: break-word; }
+.figure-below-caption p { margin: 0; color: var(--template-muted); font-size: 1.35cqw; line-height: 1.35; }
+.figure-text-col,
+.figure-bg-text { display: flex; flex-direction: column; justify-content: center; gap: 1.05cqw; min-width: 0; min-height: 0; }
+.figure-text-col > p,
+.figure-bg-text > p { margin: 0; }
+/* Above-figure prose shrinks to fit rather than spilling to the next scene;
+   the planner computes the scale (floor 0.6) and passes it per scene. */
+.figure-text-col p,
+.figure-text-col li,
+.figure-bg-text p,
+.figure-bg-text li { font-size: calc(2.083cqw * var(--figure-text-scale, 1)); }
+/* Multi-figure scenes (design 2026-08-15): the body text is a full-width row
+   above a balanced grid, and each cell owns its own frame area and legend. */
+.figure-gallery { flex: 1; display: flex; flex-direction: column; gap: 1.4cqw; min-width: 0; min-height: 0; }
+.figure-gallery-text { flex: 0 0 auto; display: flex; flex-direction: column; gap: 1.05cqw; }
+.figure-gallery-text > p { margin: 0; }
+.figure-gallery-text p,
+.figure-gallery-text li { font-size: calc(2.083cqw * var(--figure-text-scale, 1)); }
+/* Equal rows are what makes the renderer agree with the planner's rowSlot. */
+.figure-gallery-grid { flex: 1 1 auto; display: grid; grid-template-columns: repeat(var(--figure-cols, 2), minmax(0, 1fr)); grid-auto-rows: 1fr; gap: 1.6cqw 2.2cqw; min-height: 0; }
+.figure-cell { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+/* Cells are equal-height but their legends are not, so centring each frame in
+   its own area leaves the images at ragged heights. Top-align them: the frame
+   areas all start at the row's top edge, so the images line up across the row. */
+.figure-cell .figure-frame-area { flex: 1 1 auto; justify-content: flex-start; }
+.figure-cell .block-figure { justify-content: flex-start; }
+/* 文字配合圖片寬 is a single-figure rule: there the image is the widest thing
+   on the page, so the caption follows it. In a cell the image is narrower than
+   its column, and following it would squeeze the legend into a tall ribbon —
+   which steals row height, which shrinks the image further. Captions take the
+   column instead. */
+.figure-cell figcaption,
+.figure-cell .figure-below-caption { width: 100%; }
+/* A cell's image is height-capped by `size`, so it is usually narrower than
+   its column. Left-align it with its own caption rather than centring it and
+   leaving the pair visibly out of register. */
+.figure-cell .figure-frame img { margin-left: 0; margin-right: auto; }
+
+.figure-caption-number { margin-right: 0.6em; color: var(--template-teal); font-weight: 700; letter-spacing: 0.03em; }
+
+/* design v5.1: `{bg}` — the figure spans the full content height (its top
+   edge sits right under the chrome strip, "頂到 menu") and bleeds to the
+   scene's right and bottom edges. The heading lives in the left column with
+   the rest of the text. Width follows the image's aspect ratio (never
+   cropped), capped so the text column keeps at least ~38% of the scene. The
+   negative margins undo .scene-content's right and bottom insets; the bottom
+   chrome (z-30) and progress bar (z-25) sit above the content layer (z-2),
+   so the image passes beneath them. */
+/* The grid itself is pulled up to the section-nav's bottom edge (a main-axis
+   margin on a column flex item — cross-axis negative top margins are not
+   honored by stretch); the left column pads itself back down to the normal
+   content top so only the panel gains the extra height. */
+.figure-bg-grid { flex: 1; display: flex; align-items: stretch; gap: 3cqw; min-width: 0; min-height: 0; margin-top: calc(var(--scene-nav-height) - var(--scene-inset-top)); }
+.figure-bg-left { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; padding-top: calc(var(--scene-inset-top) - var(--scene-nav-height)); }
+.figure-bg-text { flex: 1 1 auto; }
+.figure-bg-text .figure-bg-caption { margin-top: 0.7cqw; padding-top: 0.7cqw; border-top: 1px solid var(--template-line); color: var(--template-muted); font-size: calc(1.35cqw * var(--figure-text-scale, 1)); line-height: 1.35; }
+.figure-bg-panel { flex: 0 1 auto; min-width: 0; max-width: 62cqw; margin: 0 calc(-1 * var(--scene-inset-x)) calc(-1 * var(--scene-inset-bottom)) 0; display: flex; flex-direction: column; }
+/* Figures share the panel height (flex, not height: 100% each) so a scene
+   mixing a bg figure with sized ones can never overflow the panel. */
+.figure-bg-panel .block-figure { flex: 1 1 0; min-height: 0; margin: 0; display: flex; flex-direction: column; }
+/* References must stay readable: on citation scenes the panel stops at the
+   content bottom instead of bleeding under the transparent citations strip. */
+.scene.has-citations .figure-bg-panel { margin-bottom: 0; }
+.figure-bg-panel .figure-frame { flex: 1 1 auto; width: auto; height: 100%; max-height: none; min-height: 0; aspect-ratio: auto; overflow: visible; border-radius: 0; background: transparent; }
+.figure-bg-panel .figure-frame img { display: block; width: auto; height: 100%; max-width: 100%; margin-left: auto; object-fit: contain; object-position: right center; }
 .scene figure { margin: 0; }
 .figure-frame { position: relative; width: 100%; height: var(--figure-height, auto); max-height: 32cqw; aspect-ratio: 4 / 3; overflow: hidden; border-radius: 0; background: #f1f2f1; }
 .figure-frame::after { content: none; }
 .scene figure img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .figure-index { display: none; }
 .scene figcaption { padding-top: 0.7cqw; color: #666; font: 400 1.25cqw/1.35 'Source Sans 3', 'Source Sans Pro', sans-serif; }
-.media-dominant-grid .figure-frame { aspect-ratio: 16 / 9; }
 
 .scene blockquote { position: relative; max-width: none; margin: 2.083cqw 0 auto 0.833cqw; padding: 1.25cqw; color: #134e4a; border-left: 3px solid #9ca3af; border-radius: 0; background: var(--template-callout); box-shadow: -0.833cqw 0 0 var(--template-teal); font: 700 1.875cqw/1.35 'Source Sans 3', 'Source Sans Pro', sans-serif; letter-spacing: 0; }
 :root[data-theme='dark'] .scene blockquote { color: #b5d7d7; }
@@ -432,27 +500,12 @@
 .continuation-label { display: block; width: fit-content; margin-bottom: 1cqw; padding: 0.3cqw 1cqw; color: #fff; border-radius: 2px; background: var(--template-teal); font-size: 1.25cqw; font-weight: 700; }
 .scene-warning { position: absolute; z-index: 50; top: 3cqw; right: 5.729cqw; padding: 0.4cqw 0.7cqw; color: #8b4b00; background: #ffe5b8; font-size: 1cqw; font-weight: 700; }
 
-/* Marpit backgrounds. */
-.scene-background-image { position: absolute; z-index: 0; inset: 0; background-position: center; background-repeat: no-repeat; }
-.scene.has-background .scene-content,
-.scene.has-background .scene-section-nav,
-.scene.has-background .scene-chrome,
-.scene.has-background .scene-progress { z-index: 2; }
-.scene.has-background.background-none .scene-content { padding: 1.5cqw; background: color-mix(in srgb, #fff 86%, transparent); }
-:root[data-theme='dark'] .scene.has-background.background-none .scene-content { background: color-mix(in srgb, #171a17 86%, transparent); }
-.scene.background-left .scene-background-image { right: auto; width: var(--scene-bg-split); }
-.scene.background-left .scene-content { left: calc(var(--scene-bg-split) + 3cqw); }
-.scene.background-right .scene-background-image { left: auto; width: var(--scene-bg-split); }
-.scene.background-right .scene-content { right: calc(var(--scene-bg-split) + 3cqw); }
 
 /* Development overlay remains legible without affecting layout. */
 .debug-card { position: absolute; z-index: 200; right: 2.8%; bottom: 8%; width: 18cqw; padding: 1.2cqw; color: #e9f3ed; border: 1px solid rgba(255,255,255,0.15); border-radius: 3px; background: rgba(20, 24, 21, 0.94); font: 500 0.9cqw ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 @container (max-width: 760px) {
-  .text-media-grid,
-  .media-dominant-grid { grid-template-columns: 1fr; gap: 2cqw; }
   .block-columns { grid-template-columns: 1fr; gap: 1.8cqw; }
-  .media-column .figure-frame { aspect-ratio: 16 / 6; }
 }
 
 /* Fullscreen text never falls below the requested 20px floor. Preview text

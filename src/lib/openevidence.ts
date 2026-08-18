@@ -88,7 +88,10 @@ export async function openEvidenceConversationMarkdown(conversation: OpenEvidenc
 }
 
 export function normalizeMarkdownUrls(markdown: string): string {
-  return markdown.replace(/\]\((https?:\/\/[^)]*)\)/gi, (_match, url: string) => `](${url.replace(/\s+/g, '')})`)
+  // The URL must stay on one line: while an image or link paren is still
+  // unclosed mid-edit, a cross-line match would pair it with a later link's
+  // paren and collapse every line in between.
+  return markdown.replace(/\]\((https?:\/\/[^)\n]*)\)/gi, (_match, url: string) => `](${url.replace(/\s+/g, '')})`)
 }
 
 function cleanDoiMatch(value: string): string {

@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
   Bug,
   Check,
-  Clock3,
   Copy,
   Download,
   Ellipsis,
@@ -24,7 +23,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Search,
   Share2,
   SquareLibrary,
   Sun,
@@ -32,354 +30,48 @@ import {
   Unlink,
   X,
 } from 'lucide-react'
-import { buildCitationReferenceMap, SceneView, BlockView, sceneSpeakerNotes } from './components/SceneView'
-import { MarkdownDocumentView, MarkdownEditor, type EditorMode } from './components/MarkdownEditor'
+import { buildCitationReferenceMap, SceneView, sceneSpeakerNotes } from './components/SceneView'
+import { MarkdownEditor, type EditorMode } from './components/MarkdownEditor'
+import { MarkdownDocumentView } from './components/editor/MarkdownDocumentView'
 import { PresentationSettingsDialog } from './components/PresentationSettingsDialog'
 import { HackMDSyncDialog } from './components/HackMDSyncDialog'
 import { BibliographyDialog } from './components/BibliographyDialog'
 import { ExportDialog } from './components/ExportDialog'
 import { PresenterWindow } from './components/PresenterWindow'
 import { PresentationRuntimeTools } from './components/PresentationRuntimeTools'
-import { buildSemanticRegions, parsePresentationDocument } from './engine/semantics'
-import { planScenes, withPresentationCover } from './engine/planner'
-import type { Density, PresentationBlock, PresentationConfig, Scene, ScenePlan, SourceRange, ThemeMode } from './engine/types'
-import { defaultPresentationConfig, normalizePresentationConfig } from './presentationConfig'
-import { normalizeMarkdownUrls } from './lib/openevidence'
+import type { Density, ThemeMode } from './engine/types'
 import { downloadBlob, exportFileName } from './export'
-
-const DEMO_MARKDOWN = `# Acute Myeloid Leukemia
-
-AML is a clonal hematopoietic malignancy characterized by abnormal proliferation of myeloid precursor cells.
-
-## Diagnosis
-
-Diagnosis requires integration of morphology, immunophenotyping, cytogenetics, and molecular genetics.
-
-- Morphology
-- Flow cytometry
-- Cytogenetics
-- Molecular testing
-
-![Microscopic cellular structure](https://images.unsplash.com/photo-1576086213369-97a306d36557?auto=format&fit=crop&w=1200&q=85)
-
-## Classification
-
-Modern AML classification increasingly incorporates molecular genetics and disease-defining genomic alterations.
-
-> Classification is no longer only what the cells look like. It is what the disease means biologically.
-
-## Treatment
-
-Treatment depends on age, fitness, disease biology, and targetable mutations.
-
-<!-- present: step -->
-- Assess patient fitness
-- Define molecular risk
-- Identify targetable mutations
-- Select induction strategy
-
-## Risk model
-
-| Signal | Interpretation |
-| --- | --- |
-| Favorable genetics | Lower relapse risk |
-| Adverse genetics | Consider transplant strategy |
-
-$$
-Risk = f(Genetics, Fitness, Response)
-$$
-
-<!-- present: break -->
-## Take-home message
-
-Treat the patient, the biology, and the trajectory — not a single snapshot.
-`
-
-const SCENEMD_LLM_PROMPT = `Convert the source content I provide into presentation-ready Markdown for SceneMD.
-
-Return only the finished Markdown, without an explanation or an outer code fence.
-
-Rules:
-- Preserve the meaning, facts, citations, links, and important nuance. Do not invent information.
-- Write an ordinary, coherent document—not a list of manually defined slides.
-- Use one H1 (#) for each major chapter, H2 (##) for sections, and H3 (###) only when genuinely useful.
-- Prefer short paragraphs and concise bullet lists. Each bullet should express one idea.
-- Keep headings descriptive and avoid orphan headings.
-- Use valid GitHub Flavored Markdown for lists, task lists, blockquotes, links, code fences, and tables.
-- For tabular information, use a GFM table with a short header row. Keep cells concise; move lengthy explanations below the table.
-- Preserve images as ![descriptive alt text](full-https-url). Do not use relative image URLs.
-- Cite sources in the text as adjacent numeric markers such as [1][2]. End with a ### References section containing a numbered list; include each DOI as doi:10.xxxx/xxxx or PubMed identifier as PMID: 12345678 so SceneMD can resolve AMA metadata.
-- Use display math as $$ ... $$ and fenced code blocks with a language identifier.
-- Do not add YAML frontmatter. SceneMD cover metadata and visual theme are configured separately.
-- Do not insert slide delimiters such as --- merely to paginate; SceneMD plans scenes automatically.
-- Add presentation hints only when they materially improve delivery, and place each hint immediately before the affected block:
-  <!-- present: break --> forces a scene break.
-  <!-- present: keep --> keeps the next block together.
-  <!-- present: hero --> emphasizes the next image.
-  <!-- present: hide --> hides the next block during presentation.
-  <!-- present: only --> shows the next block only during presentation.
-  <!-- present: step --> reveals the following list item by item.
-  <!-- present: columns --> starts responsive semantic columns. Use an H3 subtitle for each column, then close with <!-- present: end-columns -->. Two H3 groups make two columns; add more H3 groups for more columns.
-- Use an ordinary Marp-compatible HTML comment after scene content for speaker notes, for example <!-- Pause here and emphasize the risk difference. -->. Do not put audience-facing content in the note.
-- Use <!-- present: step --> sparingly for ordered speaking sequences, not every list.
-- Do not include "Scene 1", "Slide 1", speaker instructions, or layout coordinates.
-
-Source content begins below:
-
-[PASTE SOURCE CONTENT HERE]`
-
-const EMPTY_PLAN: ScenePlan = { scenes: [], averageFill: 0, overflowCount: 0, measuredBlockCount: 0 }
-const CURRENT_DEPLOY_TIME = Date.parse(__SCENEMD_BUILD_TIME__)
-const DEPLOY_CHECK_INTERVAL_MS = 2 * 60 * 1000
-
-type Route = { kind: 'home' } | { kind: 'document'; id: string } | { kind: 'share'; token: string }
-type SaveStatus = 'saved' | 'saving' | 'conflict' | 'offline'
-interface HeaderActionSpec {
-  id: string
-  label: string
-  ariaLabel: string
-  icon: ReactNode
-  onClick: () => void
-  disabled?: boolean
-  busy?: boolean
-}
-
-function directHeaderActionCount(width: number): number {
-  if (width >= 1530) return 7
-  if (width >= 1430) return 6
-  if (width >= 1330) return 5
-  if (width >= 1230) return 4
-  if (width >= 1130) return 3
-  if (width >= 1030) return 2
-  if (width >= 930) return 1
-  return 0
-}
-
-interface DocumentSummary {
-  id: string
-  title: string
-  revision: number
-  ownerEmail: string | null
-  shared: boolean
-  createdAt: string
-  updatedAt: string
-}
-
-interface DocumentPayload {
-  id: string
-  title: string
-  markdown: string
-  revision: number
-  createdAt?: string
-  updatedAt?: string
-  created_at?: string
-  updated_at?: string
-  presentationConfig?: unknown
-}
-
-interface SaveConflictState {
-  remote: DocumentPayload
-  localMarkdown: string
-  localTitle: string
-  localConfig: PresentationConfig
-}
-
-interface ConflictBackup {
-  markdown: string
-  at: string
-}
-
-// A conflicting save must never silently lose the author's text (#12). The
-// losing side is stashed here the moment a 409 arrives, so it survives
-// "Use cloud version", a tab crash, and a reload.
-const conflictBackupKey = (documentId: string) => `scenemd-conflict:${documentId}`
-
-function stashConflictBackup(documentId: string, markdown: string): void {
-  try {
-    localStorage.setItem(conflictBackupKey(documentId), JSON.stringify({ markdown, at: new Date().toISOString() } satisfies ConflictBackup))
-  } catch {
-    // Storage full or unavailable — the dialog's copy/download buttons remain.
-  }
-}
-
-function readConflictBackup(documentId: string): ConflictBackup | null {
-  try {
-    const raw = localStorage.getItem(conflictBackupKey(documentId))
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as ConflictBackup
-    return typeof parsed.markdown === 'string' ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-function clearConflictBackup(documentId: string): void {
-  try {
-    localStorage.removeItem(conflictBackupKey(documentId))
-  } catch {
-    // Nothing to do.
-  }
-}
-
-/**
- * Trim the common prefix and suffix and return the differing middles with a
- * little context, so the conflict dialog can show what actually diverged
- * instead of two line counts.
- */
-function conflictExcerpts(local: string, remote: string): { local: string; remote: string } {
-  let start = 0
-  const limit = Math.min(local.length, remote.length)
-  while (start < limit && local[start] === remote[start]) start += 1
-  let localEnd = local.length
-  let remoteEnd = remote.length
-  while (localEnd > start && remoteEnd > start && local[localEnd - 1] === remote[remoteEnd - 1]) {
-    localEnd -= 1
-    remoteEnd -= 1
-  }
-  const context = 80
-  const from = Math.max(0, start - context)
-  const clip = (source: string, end: number) => `${from > 0 ? '…' : ''}${source.slice(from, Math.min(source.length, end + context))}${end + context < source.length ? '…' : ''}`
-  return { local: clip(local, localEnd), remote: clip(remote, remoteEnd) }
-}
-
-interface DeployVersion {
-  deployedAt?: string
-}
-
-function getInitialTheme(): ThemeMode {
-  const saved = localStorage.getItem('scenemd-theme')
-  if (saved === 'light' || saved === 'dark') return saved
-  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-}
-
-function parseRoute(pathname = window.location.pathname): Route {
-  const parts = pathname.split('/').filter(Boolean)
-  if (parts[0] === 'document' && parts[1]) return { kind: 'document', id: decodeURIComponent(parts[1]) }
-  if (parts[0] === 'share' && parts[1]) return { kind: 'share', token: decodeURIComponent(parts[1]) }
-  return { kind: 'home' }
-}
-
-function titleFromMarkdown(markdown: string, fallback: string): string {
-  return markdown.match(/^#\s+(.+)$/m)?.[1]?.trim() || fallback
-}
-
-function absoluteSceneImageUrls(markdown: string): string {
-  return markdown.replace(
-    /(!\[[^\]\n]*\]\()\/api\/images\//g,
-    `$1${window.location.origin}/api/images/`,
-  )
-}
-
-function formatUpdated(value: string): string {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? 'Recently' : new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
-}
-
-function formatDeployTime(value: string): string {
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return value
-  return new Intl.DateTimeFormat('zh-TW', {
-    timeZone: 'Asia/Taipei',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  }).format(date)
-}
-
-function previewViewport(width: number) {
-  return { width, height: width < 560 ? width * (16 / 9) : Math.max(360, width * 0.5625) }
-}
-
-function blockRevealSteps(block: import('./engine/types').PresentationBlock): number {
-  const listSteps = block.stepped ? block.listItems?.length ?? 0 : 0
-  const codeSteps = Math.max(0, (block.codeHighlightSteps?.length ?? 0) - 1)
-  const groupSteps = Math.max(0, ...(block.codeGroup ?? []).map((child) => Math.max(0, (child.codeHighlightSteps?.length ?? 0) - 1)))
-  const columnSteps = (block.columns ?? []).flat().reduce((total, child) => total + blockRevealSteps(child), 0)
-  return listSteps + codeSteps + groupSteps + columnSteps
-}
-
-function sourceOffset(markdown: string, range: Pick<SourceRange, 'startLine' | 'startColumn'>): number {
-  const lines = markdown.split('\n')
-  let offset = 0
-  for (let line = 1; line < range.startLine; line += 1) offset += (lines[line - 1]?.length ?? 0) + 1
-  return Math.min(markdown.length, offset + Math.max(0, range.startColumn - 1))
-}
-
-function updateSceneSpeakerNote(markdown: string, scene: Scene | undefined, value: string): string {
-  if (!scene || scene.role === 'cover') return markdown
-  const note = value.trim().replaceAll('-->', '--\u200b>')
-  const insertAt = sourceOffset(markdown, { startLine: scene.sourceRange.endLine, startColumn: scene.sourceRange.endColumn })
-
-  // During fast typing the scene plan may still point to the source range from
-  // before the first note character was inserted. Reuse and consolidate any
-  // adjacent speaker-note comments instead of appending another comment.
-  let cursor = insertAt
-  let adjacentNoteEnd: number | null = null
-  while (cursor < markdown.length) {
-    const whitespace = markdown.slice(cursor).match(/^\s*/)?.[0] ?? ''
-    const commentStart = cursor + whitespace.length
-    if (!markdown.startsWith('<!--', commentStart)) break
-    const commentEnd = markdown.indexOf('-->', commentStart + 4)
-    if (commentEnd < 0) break
-    const comment = markdown.slice(commentStart + 4, commentEnd).trim()
-    if (/^(?:present\s*:|_?(?:class|paginate|backgroundColor|color|header|footer|theme)\s*:)/i.test(comment)) break
-    adjacentNoteEnd = commentEnd + 3
-    cursor = adjacentNoteEnd
-  }
-  if (adjacentNoteEnd !== null) {
-    const replacement = note ? `\n\n<!-- ${note} -->` : ''
-    return `${markdown.slice(0, insertAt).replace(/[ \t]+$/g, '')}${replacement}${markdown.slice(adjacentNoteEnd)}`
-  }
-
-  const ranges = scene.blocks.flatMap((block) => block.speakerNoteRanges ?? [])
-    .sort((a, b) => a.startLine - b.startLine || a.startColumn - b.startColumn)
-  if (ranges.length) {
-    const primary = ranges[0]
-    return [...ranges].reverse().reduce((source, range) => {
-      const from = sourceOffset(source, range)
-      const to = sourceOffset(source, { startLine: range.endLine, startColumn: range.endColumn })
-      return `${source.slice(0, from)}${range === primary && note ? `<!-- ${note} -->` : ''}${source.slice(to)}`
-    }, markdown)
-  }
-  if (!note) return markdown
-  return `${markdown.slice(0, insertAt)}\n\n<!-- ${note} -->${markdown.slice(insertAt)}`
-}
-
-function blockTranscriptText(block: PresentationBlock): string {
-  const inlineText = (nodes: PresentationBlock['inlines'] = []): string => nodes.map((node) => 'value' in node ? node.value : 'children' in node ? inlineText(node.children) : '\n').join('')
-  if (block.type === 'figure') return `[Image: ${block.alt ?? ''}]`
-  if (block.type === 'list') return (block.listItems ?? []).map((item) => `- ${inlineText(item)}`).join('\n')
-  if (block.type === 'table') return (block.tableRows ?? []).map((row) => row.join(' | ')).join('\n')
-  if (block.type === 'code' || block.type === 'math') return block.value ?? ''
-  return inlineText(block.inlines)
-}
-
-function sceneTranscriptText(scene: Scene | undefined): string {
-  if (!scene || scene.role === 'cover') return ''
-  return scene.blocks.map(blockTranscriptText).filter(Boolean).join('\n\n')
-}
-
+import { DEMO_MARKDOWN } from './app/constants'
+import { Cheatsheet } from './app/CheatsheetDialog'
+import { DocumentsHome, useDocumentLibrary } from './app/DocumentsHome'
+import { ShareDialog } from './app/ShareDialog'
+import { ConflictDialog } from './app/ConflictDialog'
+import { MeasurementRoot, useMeasuredPlan } from './app/useMeasuredPlan'
+import { useDocument } from './app/useDocument'
+import { usePresentationRuntime } from './app/usePresentationRuntime'
+import { LlmPromptDialog } from './app/LlmPromptDialog'
+import {
+  CURRENT_DEPLOY_TIME, DEPLOY_CHECK_INTERVAL_MS,
+  type Route, type HeaderActionSpec,
+  type DeployVersion,
+  directHeaderActionCount,
+  getInitialTheme, parseRoute, titleFromMarkdown, formatDeployTime,
+  previewViewport, blockRevealSteps, updateSceneSpeakerNote, sceneTranscriptText,
+} from './app/shared'
 function App() {
   const [route, setRoute] = useState<Route>(parseRoute)
-  const [documents, setDocuments] = useState<DocumentSummary[]>([])
-  const [markdown, setMarkdown] = useState('')
-  const [documentTitle, setDocumentTitle] = useState('Untitled document')
-  const [documentRevision, setDocumentRevision] = useState(0)
-  const [presentationConfig, setPresentationConfig] = useState<PresentationConfig>(() => defaultPresentationConfig('Untitled document'))
-  const [loading, setLoading] = useState(true)
-  const [apiError, setApiError] = useState<string | null>(null)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved')
-  const [saveConflict, setSaveConflict] = useState<SaveConflictState | null>(null)
-  const [conflictBackup, setConflictBackup] = useState<ConflictBackup | null>(null)
+  const {
+    markdown, setMarkdown,
+    documentTitle, setDocumentTitle,
+    presentationConfig, setPresentationConfig,
+    loading, apiError, clearApiError,
+    saveStatus, saveConflict, useCloudConflictVersion, keepLocalConflictVersion,
+    conflictBackup, discardConflictBackup,
+    shareLink, dismissShareLink, shareBusy, createShareLink,
+    adoptServerDocument,
+  } = useDocument(route)
   const [newerDeployTime, setNewerDeployTime] = useState<string | null>(null)
   const [refreshingDeploy, setRefreshingDeploy] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [shareLink, setShareLink] = useState<string | null>(null)
-  const [shareBusy, setShareBusy] = useState(false)
   const [density, setDensity] = useState<Density>('balanced')
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
   const [debug, setDebug] = useState(false)
@@ -396,8 +88,6 @@ function App() {
   const [hackMDSyncing, setHackMDSyncing] = useState(false)
   const [directHeaderCount, setDirectHeaderCount] = useState(() => directHeaderActionCount(window.innerWidth))
   const [headerOverflowOpen, setHeaderOverflowOpen] = useState(false)
-  const [presenting, setPresenting] = useState(false)
-  const [presenterWindow, setPresenterWindow] = useState<Window | null>(null)
   const [notesHeight, setNotesHeight] = useState(() => {
     const saved = Number(localStorage.getItem('scenemd-preview-notes-height'))
     return Number.isFinite(saved) && saved >= 90 && saved <= 320 ? saved : 150
@@ -406,37 +96,40 @@ function App() {
   const [transcriptMode, setTranscriptMode] = useState<'verbatim' | 'tldr'>('verbatim')
   const [transcriptBusy, setTranscriptBusy] = useState(false)
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
-  const [showShortcutHint, setShowShortcutHint] = useState(false)
   const [sceneIndex, setSceneIndex] = useState(0)
+  const [presenting, setPresenting] = useState(false)
   const [editorCursorLine, setEditorCursorLine] = useState(1)
   const [editorScrollRequest, setEditorScrollRequest] = useState<{ line: number; key: number } | null>(null)
   const [sceneSyncEnabled, setSceneSyncEnabled] = useState(() => localStorage.getItem('scenemd-scene-sync') !== 'false')
-  const [revealIndex, setRevealIndex] = useState(0)
-  const [blank, setBlank] = useState<'black' | 'white' | null>(null)
-  const [presentationZoom, setPresentationZoom] = useState(1)
   const [viewport, setViewport] = useState({ width: 960, height: 540 })
-  const [measurements, setMeasurements] = useState<Map<string, number>>(new Map())
-  const [measuring, setMeasuring] = useState(true)
   const previewRef = useRef<HTMLDivElement>(null)
-  const measureRef = useRef<HTMLDivElement>(null)
-  const previousPlanRef = useRef<ScenePlan>(EMPTY_PLAN)
-  const lastSavedMarkdownRef = useRef('')
-  const lastSavedPresentationConfigRef = useRef(JSON.stringify(defaultPresentationConfig('Untitled document')))
-  const liveMarkdownRef = useRef(markdown)
-  const livePresentationConfigRef = useRef(presentationConfig)
   const resizingPreviewRef = useRef(false)
   const headerOverflowRef = useRef<HTMLDivElement>(null)
-  liveMarkdownRef.current = markdown
-  livePresentationConfigRef.current = presentationConfig
 
-  const blocks = useMemo(() => parsePresentationDocument(markdown), [markdown])
-  const regions = useMemo(() => buildSemanticRegions(blocks), [blocks])
-  const plan = useMemo(
-    () => withPresentationCover(
-      planScenes(regions, measurements, presenting ? window.innerHeight : viewport.height, density, previousPlanRef.current),
-      presentationConfig,
-    ),
-    [regions, measurements, viewport.height, density, presenting, presentationConfig],
+  const { blocks, regions, plan, measuring, measureRef } = useMeasuredPlan(
+    markdown, viewport, density, theme, presenting, presentationConfig,
+    // Keep the presented scene stable across replans by remapping the index
+    // against the previous plan before the ref advances.
+    (previousPlan, nextPlan) => {
+      setSceneIndex((current) => {
+        const previousScene = previousPlan.scenes[current]
+        if (!previousScene) return Math.min(current, Math.max(0, nextPlan.scenes.length - 1))
+
+        if (previousScene.role === 'cover') {
+          const coverIndex = nextPlan.scenes.findIndex((scene) => scene.role === 'cover')
+          return coverIndex >= 0 ? coverIndex : 0
+        }
+
+        const previousBlockIds = new Set(previousScene.blocks.map((block) => block.id))
+        const matchingBlockIndex = nextPlan.scenes.findIndex((scene) => scene.blocks.some((block) => previousBlockIds.has(block.id)))
+        if (matchingBlockIndex >= 0) return matchingBlockIndex
+
+        const matchingRegionIndex = nextPlan.scenes.findIndex((scene) => scene.regionId === previousScene.regionId && scene.role === previousScene.role)
+        if (matchingRegionIndex >= 0) return matchingRegionIndex
+
+        return Math.min(current, Math.max(0, nextPlan.scenes.length - 1))
+      })
+    },
   )
   const activeDocumentId = route.kind === 'document' ? route.id : 'readonly'
   const citationReferences = useMemo(() => buildCitationReferenceMap(plan.scenes), [plan.scenes])
@@ -509,35 +202,22 @@ function App() {
     window.location.reload()
   }, [refreshingDeploy])
 
-  useEffect(() => {
-    if (!sceneSyncEnabled || !showPreview || presenting) return
-    const targetIndex = plan.scenes.findIndex((scene) => scene.role !== 'cover'
-      && editorCursorLine >= scene.sourceRange.startLine
-      && editorCursorLine <= scene.sourceRange.endLine)
-    if (targetIndex >= 0) {
-      setSceneIndex((current) => current === targetIndex ? current : targetIndex)
-      setRevealIndex(0)
-    }
-  }, [editorCursorLine, plan.scenes, presenting, sceneSyncEnabled, showPreview])
-
   const scrollEditorToScene = useCallback((index: number) => {
     if (!sceneSyncEnabled || !showPreview || presenting) return
     const line = plan.scenes[index]?.sourceRange.startLine ?? 0
     if (line <= 0) return
     setEditorScrollRequest((current) => ({ line, key: (current?.key ?? 0) + 1 }))
   }, [plan.scenes, presenting, sceneSyncEnabled, showPreview])
-  const filteredDocuments = useMemo(() => {
-    const query = searchQuery.trim().toLocaleLowerCase()
-    return query ? documents.filter((document) => document.title.toLocaleLowerCase().includes(query)) : documents
-  }, [documents, searchQuery])
 
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, '', path)
     setRoute(parseRoute(path))
-    setApiError(null)
+    clearApiError()
     setShowPreview(false)
     setSceneIndex(0)
-  }, [])
+  }, [clearApiError])
+
+  const library = useDocumentLibrary(route.kind === 'home', navigate)
 
   useEffect(() => {
     const onPopState = () => setRoute(parseRoute())
@@ -584,122 +264,6 @@ function App() {
     localStorage.setItem('scenemd-theme', theme)
   }, [theme])
 
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoading(true)
-    setApiError(null)
-    setShareLink(null)
-
-    const load = async () => {
-      try {
-        if (route.kind === 'home') {
-          const response = await fetch('/api/documents', { signal: controller.signal })
-          const result = await response.json() as { documents?: DocumentSummary[]; error?: string }
-          if (!response.ok) throw new Error(result.error || 'Could not load documents')
-          setDocuments(result.documents ?? [])
-          setMarkdown('')
-          setPresentationConfig(defaultPresentationConfig('Untitled document'))
-        } else {
-          const response = await fetch(route.kind === 'document' ? `/api/documents/${route.id}` : `/api/share/${route.token}`, { signal: controller.signal })
-          const result = await response.json() as DocumentPayload & { error?: string }
-          if (!response.ok) throw new Error(result.error || 'Could not load document')
-          const loadedMarkdown = absoluteSceneImageUrls(result.markdown)
-          setMarkdown(loadedMarkdown)
-          setDocumentTitle(result.title)
-          setDocumentRevision(result.revision)
-          const config = normalizePresentationConfig(result.presentationConfig, result.title)
-          setPresentationConfig(config)
-          lastSavedPresentationConfigRef.current = JSON.stringify(config)
-          lastSavedMarkdownRef.current = result.markdown
-          setSaveStatus('saved')
-          if (route.kind === 'document') {
-            const backup = readConflictBackup(route.id)
-            if (backup && backup.markdown !== loadedMarkdown) setConflictBackup(backup)
-            else if (backup) clearConflictBackup(route.id)
-          }
-        }
-      } catch (error) {
-        if (!controller.signal.aborted) setApiError(error instanceof Error ? error.message : 'Something went wrong')
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
-      }
-    }
-    void load()
-    return () => controller.abort()
-  }, [route])
-
-  useEffect(() => {
-    const serializedConfig = JSON.stringify(presentationConfig)
-    if (route.kind !== 'document' || loading || saveConflict || (markdown === lastSavedMarkdownRef.current && serializedConfig === lastSavedPresentationConfigRef.current)) return
-    const snapshot = markdown
-    const snapshotConfig = presentationConfig
-    const snapshotTitle = titleFromMarkdown(snapshot, documentTitle)
-    const baseRevision = documentRevision
-    const baseMarkdown = lastSavedMarkdownRef.current
-    const timer = window.setTimeout(async () => {
-      setSaveStatus('saving')
-      try {
-        const response = await fetch(`/api/documents/${route.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ markdown: snapshot, baseMarkdown, title: snapshotTitle, presentationConfig: snapshotConfig, baseRevision }),
-        })
-        const result = await response.json() as DocumentPayload & { error?: string; document?: DocumentPayload; merged?: boolean }
-        if (response.status === 409) {
-          if (result.document) {
-            const localMarkdown = liveMarkdownRef.current
-            stashConflictBackup(route.id, localMarkdown)
-            setSaveConflict({
-              remote: result.document,
-              localMarkdown,
-              localTitle: titleFromMarkdown(localMarkdown, documentTitle),
-              localConfig: livePresentationConfigRef.current,
-            })
-          }
-          setSaveStatus('conflict')
-          return
-        }
-        if (!response.ok) throw new Error(result.error || 'Save failed')
-        const savedMarkdown = absoluteSceneImageUrls(result.markdown)
-        const savedConfig = normalizePresentationConfig(result.presentationConfig, result.title)
-        lastSavedMarkdownRef.current = savedMarkdown
-        lastSavedPresentationConfigRef.current = JSON.stringify(savedConfig)
-        if (savedMarkdown !== snapshot) setMarkdown((current) => current === snapshot ? savedMarkdown : current)
-        if (JSON.stringify(savedConfig) !== serializedConfig) setPresentationConfig((current) => current === snapshotConfig ? savedConfig : current)
-        setDocumentRevision(result.revision)
-        setDocumentTitle(result.title)
-        setSaveConflict(null)
-        setSaveStatus('saved')
-      } catch {
-        setSaveStatus('offline')
-      }
-    }, 650)
-    return () => window.clearTimeout(timer)
-  }, [markdown, presentationConfig, documentRevision, documentTitle, loading, route, saveConflict])
-
-  useEffect(() => {
-    const previousPlan = previousPlanRef.current
-    setSceneIndex((current) => {
-      const previousScene = previousPlan.scenes[current]
-      if (!previousScene) return Math.min(current, Math.max(0, plan.scenes.length - 1))
-
-      if (previousScene.role === 'cover') {
-        const coverIndex = plan.scenes.findIndex((scene) => scene.role === 'cover')
-        return coverIndex >= 0 ? coverIndex : 0
-      }
-
-      const previousBlockIds = new Set(previousScene.blocks.map((block) => block.id))
-      const matchingBlockIndex = plan.scenes.findIndex((scene) => scene.blocks.some((block) => previousBlockIds.has(block.id)))
-      if (matchingBlockIndex >= 0) return matchingBlockIndex
-
-      const matchingRegionIndex = plan.scenes.findIndex((scene) => scene.regionId === previousScene.regionId && scene.role === previousScene.role)
-      if (matchingRegionIndex >= 0) return matchingRegionIndex
-
-      return Math.min(current, Math.max(0, plan.scenes.length - 1))
-    })
-    previousPlanRef.current = plan
-  }, [plan])
-
   useLayoutEffect(() => {
     if (!previewRef.current) return
     const observer = new ResizeObserver(([entry]) => {
@@ -738,25 +302,33 @@ function App() {
     window.addEventListener('pointerup', onEnd, { once: true })
   }
 
-  useLayoutEffect(() => {
-    if (!measureRef.current) return
-    setMeasuring(true)
-    const frame = window.requestAnimationFrame(() => {
-      const next = new Map<string, number>()
-      measureRef.current?.querySelectorAll<HTMLElement>('[data-measure-id], [data-measure-item-id]').forEach((element) => {
-        const id = element.dataset.measureId ?? element.dataset.measureItemId
-        if (id) next.set(id, element.getBoundingClientRect().height)
-      })
-      setMeasurements(next)
-      setMeasuring(false)
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [blocks, viewport.width, density, theme])
-
   const currentScene = plan.scenes[sceneIndex]
   const currentSpeakerNotes = useMemo(() => sceneSpeakerNotes(currentScene), [currentScene])
   const currentSpeakerNoteText = currentSpeakerNotes.join('\n\n')
   const stepCount = currentScene?.blocks.reduce((total, block) => total + blockRevealSteps(block), 0) ?? 0
+
+  const {
+    revealIndex, setRevealIndex,
+    blank, setBlank,
+    presentationZoom, setPresentationZoom,
+    showShortcutHint,
+    presenterWindow,
+    navigateToLabel, goNext, goPrevious,
+    openPresenterWindow, closePresenterWindow,
+    startPresentation, exitPresentation,
+  } = usePresentationRuntime(presenting, setPresenting, plan, regions, stepCount, sceneIndex, setSceneIndex, scrollEditorToScene, documentTitle, theme, route.kind)
+
+  useEffect(() => {
+    if (!sceneSyncEnabled || !showPreview || presenting) return
+    const targetIndex = plan.scenes.findIndex((scene) => scene.role !== 'cover'
+      && editorCursorLine >= scene.sourceRange.startLine
+      && editorCursorLine <= scene.sourceRange.endLine)
+    if (targetIndex >= 0) {
+      setSceneIndex((current) => current === targetIndex ? current : targetIndex)
+      setRevealIndex(0)
+    }
+  }, [editorCursorLine, plan.scenes, presenting, sceneSyncEnabled, showPreview, setRevealIndex])
+
   const navigationLabels = useMemo(() => [...new Set(regions
     .filter((region) => region.blocks[0]?.type === 'heading' && region.blocks[0].depth === 1)
     .map((region) => region.headingPath[0])
@@ -772,7 +344,7 @@ function App() {
   const changeSpeakerNote = useCallback((value: string) => {
     setNoteDraft(value)
     setMarkdown((source) => updateSceneSpeakerNote(source, currentScene, value))
-  }, [currentScene])
+  }, [currentScene, setMarkdown])
 
   const generateTranscript = useCallback(async () => {
     if (!currentScene || currentScene.role === 'cover' || transcriptBusy) return
@@ -799,53 +371,6 @@ function App() {
       setTranscriptBusy(false)
     }
   }, [activeDocumentId, changeSpeakerNote, currentScene, plan.scenes, sceneIndex, transcriptBusy, transcriptMode])
-
-  const navigateToLabel = useCallback((label: string) => {
-    const region = regions.find((candidate) => candidate.blocks[0]?.type === 'heading' && candidate.blocks[0].depth === 1 && candidate.headingPath[0] === label)
-    const targetIndex = region ? plan.scenes.findIndex((scene) => scene.regionId === region.id) : -1
-    if (targetIndex >= 0) { setSceneIndex(targetIndex); setRevealIndex(0); scrollEditorToScene(targetIndex) }
-  }, [plan.scenes, regions, scrollEditorToScene])
-
-  const goNext = useCallback(() => {
-    setBlank(null)
-    if (revealIndex < stepCount) setRevealIndex((value) => value + 1)
-    else {
-      const targetIndex = Math.min(sceneIndex + 1, plan.scenes.length - 1)
-      setSceneIndex(targetIndex)
-      setRevealIndex(0)
-      scrollEditorToScene(targetIndex)
-    }
-  }, [plan.scenes.length, revealIndex, sceneIndex, scrollEditorToScene, stepCount])
-
-  const goPrevious = useCallback(() => {
-    setBlank(null)
-    if (revealIndex > 0) setRevealIndex((value) => value - 1)
-    else {
-      const targetIndex = Math.max(0, sceneIndex - 1)
-      setSceneIndex(targetIndex)
-      setRevealIndex(0)
-      scrollEditorToScene(targetIndex)
-    }
-  }, [revealIndex, sceneIndex, scrollEditorToScene])
-
-  const closePresenterWindow = useCallback(() => setPresenterWindow(null), [])
-
-  const openPresenterWindow = useCallback(() => {
-    if (presenterWindow && !presenterWindow.closed) { presenterWindow.focus(); return }
-    const popup = window.open('', 'scenemd-presenter', 'popup=yes,width=1280,height=820')
-    if (!popup) return
-    popup.document.title = `${documentTitle} — Presenter`
-    popup.document.documentElement.dataset.theme = theme
-    document.querySelectorAll('style,link[rel="stylesheet"]').forEach((node) => popup.document.head.appendChild(node.cloneNode(true)))
-    popup.document.body.innerHTML = ''
-    popup.document.body.className = 'presenter-window-body'
-    setPresenterWindow(popup)
-  }, [documentTitle, presenterWindow, theme])
-
-  useEffect(() => {
-    if (!presenterWindow || presenterWindow.closed) return
-    presenterWindow.document.documentElement.dataset.theme = theme
-  }, [presenterWindow, theme])
 
   const beginNotesResize = (event: ReactPointerEvent<HTMLButtonElement>) => {
     event.preventDefault()
@@ -876,61 +401,6 @@ function App() {
     window.addEventListener('pointercancel', onCancel)
   }
 
-  const exitPresentation = useCallback(() => {
-    setPresenting(false)
-    setBlank(null)
-    if (document.fullscreenElement) void document.exitFullscreen()
-  }, [])
-
-  useEffect(() => {
-    if (!presenting) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'ArrowDown') { event.preventDefault(); goNext() }
-      else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); goPrevious() }
-      else if (event.key.toLowerCase() === 'b') setBlank((value) => value === 'black' ? null : 'black')
-      else if (event.key.toLowerCase() === 'w') setBlank((value) => value === 'white' ? null : 'white')
-      else if (event.key.toLowerCase() === 's') openPresenterWindow()
-      else if (event.key === '+' || event.key === '=') setPresentationZoom((value) => Math.min(1.5, Number((value + 0.1).toFixed(2))))
-      else if (event.key === '-') setPresentationZoom((value) => Math.max(0.75, Number((value - 0.1).toFixed(2))))
-      else if (event.key === '0') setPresentationZoom(1)
-      else if (event.key === 'Escape') exitPresentation()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [presenting, goNext, goPrevious, exitPresentation, openPresenterWindow])
-
-  useEffect(() => {
-    if (!presenting) { setShowShortcutHint(false); return }
-    let hideTimer = 0
-    const showHint = () => {
-      setShowShortcutHint(true)
-      window.clearTimeout(hideTimer)
-      hideTimer = window.setTimeout(() => setShowShortcutHint(false), 1400)
-    }
-    showHint()
-    window.addEventListener('mousemove', showHint, { passive: true })
-    return () => { window.clearTimeout(hideTimer); window.removeEventListener('mousemove', showHint) }
-  }, [presenting])
-
-  useEffect(() => {
-    const onShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !presenting && route.kind !== 'home') {
-        event.preventDefault()
-        setPresenting(true)
-        setRevealIndex(0)
-        document.documentElement.requestFullscreen?.().catch(() => undefined)
-      }
-    }
-    window.addEventListener('keydown', onShortcut)
-    return () => window.removeEventListener('keydown', onShortcut)
-  }, [presenting, route.kind])
-
-  const startPresentation = () => {
-    setPresenting(true)
-    setRevealIndex(0)
-    document.documentElement.requestFullscreen?.().catch(() => undefined)
-  }
-
   const togglePreview = () => {
     if (showPreview) {
       setShowPreview(false)
@@ -941,98 +411,8 @@ function App() {
     setShowPreview(true)
   }
 
-  const createDocument = async () => {
-    setCreating(true)
-    setApiError(null)
-    try {
-      const response = await fetch('/api/documents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Untitled document', markdown: '# Introduction\n\nStart writing here.\n', presentationConfig: defaultPresentationConfig('Untitled presentation') }),
-      })
-      const result = await response.json() as DocumentPayload & { error?: string }
-      if (!response.ok) throw new Error(result.error || 'Could not create document')
-      navigate(`/document/${result.id}`)
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not create document')
-    } finally {
-      setCreating(false)
-    }
-  }
 
-  const createShareLink = async () => {
-    if (route.kind !== 'document') return
-    setShareBusy(true)
-    try {
-      const response = await fetch(`/api/documents/${route.id}/share`, { method: 'POST' })
-      const result = await response.json() as { sharePath?: string; error?: string }
-      if (!response.ok || !result.sharePath) throw new Error(result.error || 'Could not create share link')
-      const link = new URL(result.sharePath, window.location.origin).toString()
-      setShareLink(link)
-      await navigator.clipboard.writeText(link).catch(() => undefined)
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not create share link')
-    } finally {
-      setShareBusy(false)
-    }
-  }
 
-  const useCloudConflictVersion = () => {
-    if (!saveConflict) return
-    const remote = saveConflict.remote
-    const remoteMarkdown = absoluteSceneImageUrls(remote.markdown)
-    const remoteConfig = normalizePresentationConfig(remote.presentationConfig, remote.title)
-    lastSavedMarkdownRef.current = remoteMarkdown
-    lastSavedPresentationConfigRef.current = JSON.stringify(remoteConfig)
-    setMarkdown(remoteMarkdown)
-    setDocumentTitle(remote.title)
-    setDocumentRevision(remote.revision)
-    setPresentationConfig(remoteConfig)
-    setSaveConflict(null)
-    setSaveStatus('saved')
-  }
-
-  const keepLocalConflictVersion = async () => {
-    if (!saveConflict || route.kind !== 'document') return
-    const conflict = saveConflict
-    setSaveStatus('saving')
-    try {
-      const response = await fetch(`/api/documents/${route.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          markdown: conflict.localMarkdown,
-          baseMarkdown: conflict.remote.markdown,
-          title: conflict.localTitle,
-          presentationConfig: conflict.localConfig,
-          baseRevision: conflict.remote.revision,
-        }),
-      })
-      const result = await response.json() as DocumentPayload & { error?: string }
-      if (response.status === 409) {
-        const remote = (result as DocumentPayload & { document?: DocumentPayload }).document
-        stashConflictBackup(route.id, conflict.localMarkdown)
-        if (remote) setSaveConflict((current) => current ? { ...current, remote } : current)
-        setSaveStatus('conflict')
-        return
-      }
-      if (!response.ok) throw new Error(result.error || 'Could not save your version')
-      clearConflictBackup(route.id)
-      const savedMarkdown = absoluteSceneImageUrls(result.markdown)
-      const savedConfig = normalizePresentationConfig(result.presentationConfig, result.title)
-      lastSavedMarkdownRef.current = savedMarkdown
-      lastSavedPresentationConfigRef.current = JSON.stringify(savedConfig)
-      setMarkdown(savedMarkdown)
-      setDocumentTitle(result.title)
-      setDocumentRevision(result.revision)
-      setPresentationConfig(savedConfig)
-      setSaveConflict(null)
-      setSaveStatus('saved')
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : 'Could not resolve save conflict')
-      setSaveStatus('conflict')
-    }
-  }
 
   const renderThemeButton = (inOverflow = false) => (
     <button className={inOverflow ? 'header-overflow-item' : 'icon-button'} onClick={() => { setTheme((value) => value === 'light' ? 'dark' : 'light'); if (inOverflow) setHeaderOverflowOpen(false) }} title={`Use ${theme === 'light' ? 'dark' : 'light'} mode`} aria-label={`Use ${theme === 'light' ? 'dark' : 'light'} mode`}>
@@ -1076,10 +456,10 @@ function App() {
           <span className="brand-mark"><span /><span /><span /></span>
           <span>Scene<span>MD</span></span>
         </button>
-        {route.kind === 'home' ? <div className="document-breadcrumb"><Files size={14} /><span>Documents</span><small>{documents.length} files</small></div> : <div className="document-breadcrumb"><FileText size={14} /><span>{documentTitle}</span><small>{isReadOnlyShare ? 'Read only' : saveLabel}</small></div>}
+        {route.kind === 'home' ? <div className="document-breadcrumb"><Files size={14} /><span>Documents</span><small>{library.documents.length} files</small></div> : <div className="document-breadcrumb"><FileText size={14} /><span>{documentTitle}</span><small>{isReadOnlyShare ? 'Read only' : saveLabel}</small></div>}
         <nav className="header-actions" aria-label="Document actions">
           {(!themeInOverflow || route.kind === 'home' || isReadOnlyShare) && renderThemeButton()}
-          {route.kind === 'home' ? <button className="present-button" onClick={() => void createDocument()} disabled={creating}><Plus size={16} /> {creating ? 'Creating…' : 'New document'}</button> : <>
+          {route.kind === 'home' ? <button className="present-button" onClick={() => void library.create()} disabled={library.creating}><Plus size={16} /> {library.creating ? 'Creating…' : 'New document'}</button> : <>
             {directHeaderActions.map((action) => renderDocumentHeaderAction(action))}
             {hasHeaderOverflow && <div className="header-overflow" ref={headerOverflowRef}>
               <button className={`header-overflow-trigger${headerOverflowOpen ? ' is-active' : ''}`} onClick={() => setHeaderOverflowOpen((open) => !open)} aria-label="More document actions" aria-expanded={headerOverflowOpen} aria-haspopup="menu"><Ellipsis size={18} /></button>
@@ -1095,27 +475,7 @@ function App() {
       </header>
 
       {route.kind === 'home' ? (
-        <main className="documents-home">
-          <section className="documents-hero">
-            <span>Document-first presentations</span>
-            <h1>Your documents</h1>
-            <p>Write once in Markdown. SceneMD composes the presentation when you need it.</p>
-            <button onClick={() => void createDocument()} disabled={creating}><Plus size={18} /> {creating ? 'Creating document…' : 'New document'}</button>
-          </section>
-          <section className="documents-library" aria-labelledby="documents-title">
-            <div className="library-heading"><div><h2 id="documents-title">Files</h2><span>{filteredDocuments.length} documents</span></div><label className="document-search"><Search size={16} /><input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search documents" aria-label="Search documents" /></label></div>
-            {apiError && <div className="api-message is-error">{apiError}</div>}
-            {loading ? <div className="document-empty">Loading your documents…</div> : filteredDocuments.length ? <div className="document-list">
-              {filteredDocuments.map((document) => <button key={document.id} className="document-row" onClick={() => navigate(`/document/${document.id}`)}>
-                <span className="document-icon"><FileText size={19} /></span>
-                <span className="document-name"><strong>{document.title}</strong><small><Clock3 size={12} /> Updated {formatUpdated(document.updatedAt)}</small></span>
-                {document.shared && <span className="shared-badge"><Link2 size={12} /> Shared</span>}
-                <span className="document-revision">v{document.revision}</span>
-                <ArrowRight size={17} />
-              </button>)}
-            </div> : <div className="document-empty"><Files size={28} /><strong>No documents yet</strong><span>Create your first Markdown document to begin.</span><button onClick={() => void createDocument()}><Plus size={15} /> New document</button></div>}
-          </section>
-        </main>
+        <DocumentsHome library={library} navigate={navigate} />
       ) : loading ? <main className="route-loading">Loading document…</main> : apiError ? <main className="route-loading is-error"><strong>Could not open this document</strong><span>{apiError}</span><button onClick={() => navigate('/')}>Back to documents</button></main> : isReadOnlyShare ? (
         <main className="shared-document-shell">
           <div className="shared-document-notice"><Link2 size={15} /><span>This is a read-only shared document.</span></div>
@@ -1125,7 +485,7 @@ function App() {
         <main className={`workspace ${showPreview ? 'is-preview-open' : ''}${resizingPreview ? ' is-resizing-preview' : ''}`} id="top" style={showPreview ? { '--preview-width': `${previewWidth}px` } as React.CSSProperties : undefined}>
           <section className="editor-panel" aria-label="Markdown editor">
             <div className="editor-wrap">
-              <MarkdownEditor value={markdown} onChange={(value) => { const normalized = normalizeMarkdownUrls(value); setMarkdown(normalized); setDocumentTitle(titleFromMarkdown(normalized, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} onCursorLineChange={setEditorCursorLine} scrollRequest={editorScrollRequest} />
+              <MarkdownEditor value={markdown} onChange={(value) => { setMarkdown(value); setDocumentTitle(titleFromMarkdown(value, documentTitle)) }} theme={theme} mode={editorMode} onModeChange={setEditorMode} onReset={() => { setMarkdown(DEMO_MARKDOWN); setSceneIndex(0) }} documentId={activeDocumentId} saveStatus={saveStatus} onCursorLineChange={setEditorCursorLine} scrollRequest={editorScrollRequest} />
             </div>
           </section>
 
@@ -1168,102 +528,39 @@ function App() {
       {showBibliography && <BibliographyDialog markdown={markdown} documentTitle={documentTitle} onClose={() => setShowBibliography(false)} />}
       {showExport && <ExportDialog markdown={markdown} title={documentTitle} scenes={plan.scenes} presentationConfig={presentationConfig} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onClose={() => setShowExport(false)} />}
       {showPresentationSettings && <PresentationSettingsDialog value={presentationConfig} onSave={(config) => { setPresentationConfig(config); setSceneIndex(0) }} onClose={() => setShowPresentationSettings(false)} />}
-      {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={(document) => {
-        setMarkdown(absoluteSceneImageUrls(document.markdown))
-        setDocumentTitle(document.title)
-        setDocumentRevision(document.revision)
-        setPresentationConfig(document.presentationConfig)
-        lastSavedMarkdownRef.current = document.markdown
-        lastSavedPresentationConfigRef.current = JSON.stringify(document.presentationConfig)
-        setSaveStatus('saved')
-      }} />}
+      {showHackMDSync && route.kind === 'document' && <HackMDSyncDialog documentId={route.id} onBusyChange={setHackMDSyncing} onClose={() => setShowHackMDSync(false)} onDocument={adoptServerDocument} />}
       {presenterWindow && !presenterWindow.closed && <PresenterWindow target={presenterWindow} scenes={plan.scenes} sceneIndex={sceneIndex} revealIndex={revealIndex} presentationConfig={presentationConfig} citationReferences={citationReferences} navigationLabels={navigationLabels} activeLabels={sceneNavigationLabels} onPrevious={goPrevious} onNext={goNext} onBlack={() => setBlank((value) => value === 'black' ? null : 'black')} onClosed={closePresenterWindow} />}
-      {shareLink && <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShareLink(null) }}><aside className="share-dialog" role="dialog" aria-modal="true" aria-labelledby="share-title"><div className="share-icon"><Link2 size={22} /></div><h2 id="share-title">Read-only link ready</h2><p>Anyone with this unguessable link can read and present this document. They cannot edit it.</p><div className="share-link-field"><input value={shareLink} readOnly aria-label="Read-only share link" /><button onClick={() => void navigator.clipboard.writeText(shareLink)}><Copy size={15} /> Copy</button></div><button className="share-done" onClick={() => setShareLink(null)}>Done</button></aside></div>}
-      {saveConflict && <div className="save-conflict-backdrop" role="presentation"><aside className="save-conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="save-conflict-title">
-        <div className="save-conflict-icon"><RefreshCw size={21} /></div>
-        <h2 id="save-conflict-title">Two sessions edited this document</h2>
-        <p>SceneMD could not safely merge changes made to the same content. Your local Markdown is still in this editor, and a backup copy is kept on this device until the conflict is resolved.</p>
-        <div className="save-conflict-meta"><span>Your copy</span><strong>{saveConflict.localMarkdown.split('\n').length} lines</strong><span>Cloud copy</span><strong>revision {saveConflict.remote.revision}</strong></div>
-        {(() => {
-          const excerpts = conflictExcerpts(saveConflict.localMarkdown, saveConflict.remote.markdown)
-          return <div className="save-conflict-diff">
-            <div><span>Your version</span><pre>{excerpts.local || '(empty)'}</pre></div>
-            <div><span>Cloud version</span><pre>{excerpts.remote || '(empty)'}</pre></div>
-          </div>
-        })()}
-        <div className="save-conflict-actions">
-          <button onClick={() => void navigator.clipboard.writeText(saveConflict.localMarkdown)}><Copy size={15} /> Copy my Markdown</button>
-          <button onClick={() => downloadBlob(new Blob([saveConflict.localMarkdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${saveConflict.localTitle} (my version)`, 'md'))}>Download .md</button>
-          <button onClick={useCloudConflictVersion}>Use cloud version</button>
-          <button className="is-primary" onClick={() => void keepLocalConflictVersion()}>Keep my version</button>
-        </div>
-      </aside></div>}
+      {shareLink && <ShareDialog shareLink={shareLink} onClose={dismissShareLink} />}
+      {saveConflict && <ConflictDialog conflict={saveConflict} onUseCloud={useCloudConflictVersion} onKeepLocal={() => void keepLocalConflictVersion()} />}
 
-      {conflictBackup && route.kind === 'document' && !saveConflict && <aside className="deploy-update-toast conflict-backup-toast" role="status" aria-live="polite">
+      {conflictBackup && route.kind === 'document' && !saveConflict && <output className="deploy-update-toast conflict-backup-toast">
         <span className="deploy-update-icon"><Copy size={18} /></span>
         <span className="deploy-update-copy"><strong>A backup from an unresolved conflict exists</strong><small>saved {new Date(conflictBackup.at).toLocaleString()} — it differs from the loaded document</small></span>
         <button onClick={() => void navigator.clipboard.writeText(conflictBackup.markdown)}><Copy size={14} /> Copy</button>
         <button onClick={() => downloadBlob(new Blob([conflictBackup.markdown], { type: 'text/markdown;charset=utf-8' }), exportFileName(`${documentTitle} (conflict backup)`, 'md'))}>Download</button>
-        <button onClick={() => { clearConflictBackup(route.id); setConflictBackup(null) }}>Discard</button>
-      </aside>}
+        <button onClick={discardConflictBackup}>Discard</button>
+      </output>}
 
-      {newerDeployTime && <aside className="deploy-update-toast" role="status" aria-live="polite">
+      {newerDeployTime && <output className="deploy-update-toast">
         <span className="deploy-update-icon"><RefreshCw className={refreshingDeploy ? 'is-spinning' : ''} size={18} /></span>
         <span className="deploy-update-copy"><strong>SceneMD 已有新版本</strong><small>部署時間 {formatDeployTime(newerDeployTime)} GMT+8</small></span>
         <button onClick={() => void forceRefreshForDeploy()} disabled={refreshingDeploy}>{refreshingDeploy ? '更新中…' : '重新整理'}</button>
-      </aside>}
+      </output>}
 
-      {route.kind !== 'home' && <div className="measurement-root" ref={measureRef} aria-hidden="true" style={{ width: Math.max(320, viewport.width - 150) }}>{blocks.map((block) => <div data-measure-id={block.id} key={block.id}><BlockView block={block} measurement /></div>)}</div>}
+      {route.kind !== 'home' && <MeasurementRoot blocks={blocks} measureRef={measureRef} width={Math.max(320, viewport.width - 150)} />}
 
-      {presenting && currentScene && <div className="presentation-overlay" role="dialog" aria-label="Presentation mode">
+      {presenting && currentScene && <dialog open className="presentation-overlay" aria-label="Presentation mode">
+        <div className="sr-only" aria-live="polite">{`Scene ${sceneIndex + 1} of ${plan.scenes.length}`}</div>
         <div className="presentation-zoom-layer" style={{ transform: `scale(${presentationZoom})` }}><SceneView scene={currentScene} sceneNumber={sceneIndex + 1} sceneCount={plan.scenes.length} debug={debug} revealIndex={revealIndex} navigationLabels={navigationLabels} activeNavigationLabel={activeNavigationLabel} onNavigateLabel={navigateToLabel} presentationConfig={presentationConfig} citationReferences={citationReferences} /></div>
         <PresentationRuntimeTools sceneId={currentScene.id} zoom={presentationZoom} onZoomChange={setPresentationZoom} />
         <div className="presentation-controls"><button onClick={goPrevious} aria-label="Previous"><ArrowLeft size={18} /></button><span>{sceneIndex + 1} / {plan.scenes.length}</span><button onClick={goNext} aria-label="Next"><ArrowRight size={18} /></button><span className="control-separator" /><button onClick={openPresenterWindow} aria-label="Open presenter window"><Mic2 size={17} /></button>{!isReadOnlyShare && <button onClick={() => setDebug((value) => !value)} aria-label="Toggle debug"><Bug size={17} /></button>}<button onClick={exitPresentation} aria-label="Exit presentation"><X size={18} /></button></div>
         <div className={`keyboard-hint ${showShortcutHint ? 'is-visible' : ''}`}><span><kbd>←</kbd><kbd>→</kbd> navigate</span><span><kbd>S</kbd> speaker</span><span><kbd>B</kbd> black</span><span><kbd>W</kbd> white</span><span><kbd>Esc</kbd> exit</span></div>
-        {blank && <div className={`blank-screen blank-${blank}`} onClick={() => setBlank(null)} />}
-      </div>}
+        {blank && <button type="button" className={`blank-screen blank-${blank}`} onClick={() => setBlank(null)} aria-label="Resume presentation" />}
+      </dialog>}
 
       {route.kind !== 'home' && !isReadOnlyShare && <button className="mobile-present" onClick={startPresentation}><Expand size={17} /> Present</button>}
     </div>
   )
-}
-
-function Cheatsheet({ onClose }: { onClose: () => void }) {
-  return <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><aside className="cheatsheet-dialog" role="dialog" aria-modal="true" aria-labelledby="cheatsheet-title">
-    <div className="cheatsheet-heading"><div><span>Reference</span><h2 id="cheatsheet-title">Markdown cheat sheet</h2></div><button className="icon-button" onClick={onClose} aria-label="Close cheat sheet"><X size={18} /></button></div>
-    <div className="cheatsheet-grid"><section><h3>Markdown</h3><dl>
-      <div><dt><code># Title</code></dt><dd>Document chapter</dd></div><div><dt><code>## Section</code></dt><dd>Section heading</dd></div><div><dt><code>**bold**</code></dt><dd>Bold text</dd></div><div><dt><code>_italic_</code></dt><dd>Italic text</dd></div><div><dt><code>- Item</code></dt><dd>Bulleted list</dd></div><div><dt><code>1. Item</code></dt><dd>Numbered list</dd></div><div><dt><code>&gt; Quote</code></dt><dd>Block quote</dd></div><div><dt><code>[text](url)</code></dt><dd>Link</dd></div><div><dt><code>[1][2]</code></dt><dd>Adjacent numeric citations</dd></div><div><dt><code>doi:10.xxxx/xxxx</code></dt><dd>Resolvable DOI in References</dd></div><div><dt><code>PMID: 12345678</code></dt><dd>Resolvable PubMed citation</dd></div><div><dt><code>![alt](url)</code></dt><dd>Proportional inline image preview</dd></div><div><dt><code>![w:400px](url)</code></dt><dd>Marpit proportional image sizing</dd></div><div><dt><code>```ts &#123;2-3|5|all&#125;</code></dt><dd>Progressive code line highlighting</dd></div><div><dt><code>&#123;lines:true,startLine:5&#125;</code></dt><dd>Code line numbers and starting line</dd></div><div><dt><code>```mermaid</code></dt><dd>Responsive Mermaid diagram</dd></div><div><dt><code>::code-group</code></dt><dd>Tabbed code alternatives</dd></div><div><dt><code>$$ x $$</code></dt><dd>Display math</dd></div>
-    </dl></section><section><h3>Presentation hints</h3><dl>
-      <div><dt><code>&lt;!-- present: break --&gt;</code></dt><dd>Force a scene break</dd></div><div><dt><code>&lt;!-- present: keep --&gt;</code></dt><dd>Keep the next block together</dd></div><div><dt><code>&lt;!-- present: hero --&gt;</code></dt><dd>Emphasize the next image</dd></div><div><dt><code>&lt;!-- present: hide --&gt;</code></dt><dd>Hide the next block in presentation</dd></div><div><dt><code>&lt;!-- present: only --&gt;</code></dt><dd>Show the next block only in presentation</dd></div><div><dt><code>&lt;!-- present: step --&gt;</code></dt><dd>Reveal the next list item by item</dd></div><div><dt><code>&lt;!-- present: columns --&gt;</code></dt><dd>Start responsive columns; each H3 starts a column</dd></div><div><dt><code>&lt;!-- present: column --&gt;</code></dt><dd>Start another column without a subtitle</dd></div><div><dt><code>&lt;!-- present: end-columns --&gt;</code></dt><dd>End the column group</dd></div><div><dt><code>&lt;!-- speaker note --&gt;</code></dt><dd>Marp-compatible note for the current scene</dd></div><div><dt><code>[click]</code></dt><dd>Advance presenter-note emphasis with reveals</dd></div><div><dt><code>+ / − / 0</code></dt><dd>Zoom presentation content</dd></div>
-    </dl><p>Hints apply to the block immediately following the comment. Type <code>&lt;!-- present:</code> in the editor to autocomplete one.</p></section></div>
-  </aside></div>
-}
-
-function LlmPromptDialog({ onClose }: { onClose: () => void }) {
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
-
-  const copyPrompt = async () => {
-    await navigator.clipboard.writeText(SCENEMD_LLM_PROMPT)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1800)
-  }
-
-  return <div className="cheatsheet-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <aside className="llm-prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="llm-prompt-title">
-      <div className="cheatsheet-heading"><div><span>Reusable prompt</span><h2 id="llm-prompt-title">Prepare content for SceneMD</h2></div><button className="icon-button" onClick={onClose} aria-label="Close LLM prompt"><X size={18} /></button></div>
-      <div className="llm-prompt-content">
-        <p>Copy this into any LLM, then replace the final placeholder with your source content.</p>
-        <textarea value={SCENEMD_LLM_PROMPT} readOnly aria-label="SceneMD conversion prompt" spellCheck={false} />
-        <button className="llm-prompt-copy" onClick={() => void copyPrompt()}>{copied ? <Check size={16} /> : <Copy size={16} />}{copied ? 'Copied' : 'Copy prompt'}</button>
-      </div>
-    </aside>
-  </div>
 }
 
 export default App

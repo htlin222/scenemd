@@ -7,4 +7,9 @@ artifacts/
 .env.*
 !.env.example
 *.tsbuildinfo
+test-results/
+playwright-report/
 worker/wrangler.smoke.generated.jsonc
+
+# Claude worktrees
+.claude/worktrees/

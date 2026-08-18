@@ -72,6 +72,8 @@ export interface PresentationBlock {
   url?: string
   alt?: string
   imageOptions?: import('../imageSyntax').MarpitImageOptions
+  figureNumber?: number
+  groupId?: string
   caption?: InlineNode[]
   value?: string
   language?: string
@@ -98,7 +100,7 @@ export interface SemanticRegion {
   explicitBreakAfter: boolean
 }
 
-export type SceneLayout = 'title' | 'chapter' | 'text' | 'text-media' | 'media-dominant' | 'legend' | 'statement'
+export type SceneLayout = 'title' | 'chapter' | 'text' | 'figure' | 'figure-bg' | 'statement'
 export type SceneRole = 'cover' | 'chapter' | 'content'
 
 export interface ScoreBreakdown {
@@ -127,6 +129,9 @@ export interface Scene {
   score: number
   scores: ScoreBreakdown
   warning?: string
+  figureTextScale?: number
+  /** Column count for a multi-figure grid scene; absent for the v5 single-figure layout. */
+  figureColumns?: number
   continuationLabel?: string
   breadcrumb?: string
 }

@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Check, Download, FileCode2, FileText, FileType2, LoaderCircle, MonitorPlay, Presentation, X } from 'lucide-react'
 import type { InlineNode, PresentationBlock, PresentationConfig, Scene } from '../engine/types'
 import { parsePresentationDocument } from '../engine/semantics'
-import { documentVisibleMarkdown, MarkdownDocumentView } from './MarkdownEditor'
+import { documentVisibleMarkdown, MarkdownDocumentView } from './editor/MarkdownDocumentView'
 import { buildCitationReferenceMap, SceneView, sceneSpeakerNotes } from './SceneView'
 import { documentHtml, downloadBlob, exportFileName, inlineText, slideHtml, type ExportFormat } from '../export'
+import { useModalFocus } from '../app/useModalFocus'
 
 interface ExportDialogProps {
   markdown: string
@@ -29,6 +30,7 @@ const FORMATS: Array<{ id: ExportFormat; label: string; detail: string; icon: ty
 const EXPORT_PIXEL_RATIO = 4
 
 export function ExportDialog({ markdown, title, scenes, presentationConfig, navigationLabels, activeLabels, onClose }: ExportDialogProps) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const sceneRefs = useRef<Array<HTMLDivElement | null>>([])
   const documentRef = useRef<HTMLDivElement>(null)
   const [busy, setBusy] = useState<ExportFormat | null>(null)
@@ -153,7 +155,7 @@ export function ExportDialog({ markdown, title, scenes, presentationConfig, navi
   }
 
   return <div className="export-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose() }}>
-    <section className="export-dialog" role="dialog" aria-modal="true" aria-labelledby="export-title">
+    <dialog open ref={dialogRef} className="export-dialog" aria-modal="true" aria-labelledby="export-title">
       <header><div><Download size={19} /><div><small>One source, multiple projections</small><h2 id="export-title">Export document</h2></div></div><button onClick={onClose} disabled={Boolean(busy)} aria-label="Close export"><X size={18} /></button></header>
       <div className="export-intro"><p>Choose an output. SceneMD preserves the document for reading formats and uses the current scene plan for presentation formats.</p><span>{scenes.length} scenes</span></div>
       <div className="export-grid">
@@ -164,7 +166,7 @@ export function ExportDialog({ markdown, title, scenes, presentationConfig, navi
         </button>)}
       </div>
       <footer><span className={error ? 'is-error' : ''}>{error || progress || 'Layout is handled automatically from the current document and viewport plan.'}</span>{busy && <span className="export-progress"><i /></span>}</footer>
-    </section>
+    </dialog>
     <div className="export-render-root" aria-hidden="true">
       {scenes.map((scene, index) => <div className="export-scene" key={scene.id} ref={(node) => { sceneRefs.current[index] = node }}><SceneView scene={scene} sceneNumber={index + 1} sceneCount={scenes.length} revealIndex={Number.POSITIVE_INFINITY} navigationLabels={navigationLabels} activeNavigationLabel={activeLabels[index]} presentationConfig={presentationConfig} citationReferences={citationReferences} /></div>)}
       <div ref={documentRef}><MarkdownDocumentView value={documentMarkdown} /></div>

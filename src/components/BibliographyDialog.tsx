@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Braces, Check, Copy, Download, ExternalLink, LayoutGrid, LoaderCircle, RefreshCw, SquareLibrary, X } from 'lucide-react'
 import { scanBibliographySources, urlBibtex } from '../citations'
+import { useModalFocus } from '../app/useModalFocus'
 
 function fallbackDoiBibtex(doi: string): string {
   const key = `doi_${doi.replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '')}`
@@ -70,6 +71,7 @@ function bibliographyCard(entry: string): BibliographyCard {
 }
 
 export function BibliographyDialog({ markdown, documentTitle, onClose }: { markdown: string; documentTitle: string; onClose: () => void }) {
+  const dialogRef = useModalFocus<HTMLDialogElement>()
   const sources = useMemo(() => scanBibliographySources(markdown), [markdown])
   const [reloadKey, setReloadKey] = useState(0)
   const [doiEntries, setDoiEntries] = useState<string[]>([])
@@ -138,7 +140,7 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
   }
 
   return <div className="bibliography-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="bibliography-dialog" role="dialog" aria-modal="true" aria-labelledby="bibliography-title">
+    <dialog open ref={dialogRef} className="bibliography-dialog" aria-modal="true" aria-labelledby="bibliography-title">
       <header>
         <div><SquareLibrary size={19} /><div><small>Derived from this document</small><h2 id="bibliography-title">Bibliography library</h2></div></div>
         <button onClick={onClose} aria-label="Close bibliography"><X size={18} /></button>
@@ -147,7 +149,7 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
         <span><strong>{sources.dois.length}</strong> DOI{sources.dois.length === 1 ? '' : 's'}</span>
         <span><strong>{sources.urls.length}</strong> web source{sources.urls.length === 1 ? '' : 's'}</span>
         <span><strong>{total}</strong> unique entries</span>
-        <div className="bibliography-view-switch" role="group" aria-label="Bibliography view"><button className={view === 'cards' ? 'is-active' : ''} onClick={() => setView('cards')} aria-pressed={view === 'cards'}><LayoutGrid size={14} /> Cards</button><button className={view === 'raw' ? 'is-active' : ''} onClick={() => setView('raw')} aria-pressed={view === 'raw'}><Braces size={14} /> Raw .bib</button></div>
+        <fieldset className="bibliography-view-switch" aria-label="Bibliography view"><button className={view === 'cards' ? 'is-active' : ''} onClick={() => setView('cards')} aria-pressed={view === 'cards'}><LayoutGrid size={14} /> Cards</button><button className={view === 'raw' ? 'is-active' : ''} onClick={() => setView('raw')} aria-pressed={view === 'raw'}><Braces size={14} /> Raw .bib</button></fieldset>
         <button className="bibliography-rescan" onClick={() => setReloadKey((value) => value + 1)} disabled={loading}><RefreshCw className={loading ? 'is-spinning' : undefined} size={14} /> Rescan</button>
       </div>
       <div className="bibliography-content">
@@ -164,6 +166,6 @@ export function BibliographyDialog({ markdown, documentTitle, onClose }: { markd
         <span>{loading ? `Resolving ${doiEntries.length} of ${sources.dois.length} DOI entries…` : 'BibTeX is generated from the current Markdown and is not stored separately.'}</span>
         <div><button onClick={() => void copyBibliography()} disabled={!bibliography}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Copied' : 'Copy .bib'}</button><button className="bibliography-primary" onClick={downloadBibliography} disabled={!bibliography}><Download size={15} /> Download .bib</button></div>
       </footer>
-    </section>
+    </dialog>
   </div>
 }
