@@ -130,7 +130,7 @@ test('each cell keeps its own legend', async ({ page }) => {
   await expect(cells.nth(0).locator('.figure-below-caption')).not.toContainText('第 2 組')
 })
 
-const distinct = (values: number[]) => [...new Set(values.map((value) => Math.round(value / 5)))].length
+const distinct = (values: number[]) => new Set(values.map((value) => Math.round(value / 5))).size
 // Poll the whole shape at once: cell boxes settle across ResizeObserver rounds,
 // so a single sample can catch the grid mid-layout.
 const gridShape = (page: import('@playwright/test').Page) => expect.poll(async () => {
