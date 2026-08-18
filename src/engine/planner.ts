@@ -32,6 +32,10 @@ function blockHeight(block: PresentationBlock, measurements: Map<string, number>
   // Sized figures are computed contextually inside usedHeight's figure branch
   // (their basis is the space remaining under the heading, design v5). Here a
   // sized figure only needs a sane fallback for the pre-split pass.
+  // A bg figure lives in the full-height bleed panel (design v5.1) — it never
+  // occupies the text flow, so it costs the vertical budget nothing anywhere:
+  // pre-split, scoring, and usedHeight all see zero.
+  if (block.type === 'figure' && block.imageOptions?.background) return 0
   const sized = block.type === 'figure' ? block.imageOptions?.size?.match(/^(\d+(?:\.\d+)?)%$/) : null
   if (sized) return (sceneBudget * Number(sized[1])) / 100
   const measured = measurements.get(block.id)
@@ -160,6 +164,11 @@ const MIN_FRAME_SHRINK = 0.75
 // Above-figure prose may shrink to fit the scene ("縮小文字，總之塞就對了"),
 // down to this floor — below it the scene overflows visibly instead.
 const MIN_TEXT_SCALE = 0.6
+// The bg bleed panel may take up to 62% of the scene width (design v5.1), so
+// left-column prose wraps roughly this much taller than its full-width
+// measurement. The planner cannot know the image's aspect ratio, so it plans
+// for the worst case; calibrate against browser-check screenshots.
+const BG_TEXT_WIDTH_FACTOR = 1.9
 // Gap between the body-text row and the figure grid, and between grid rows.
 // They mirror the `gap` values in .figure-gallery / .figure-gallery-grid.
 const FIGURE_GRID_GAP = 20
@@ -246,23 +255,31 @@ interface FigureColumns {
   aboveHeight: number
 }
 
-function figureColumns(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): FigureColumns {
+// A run of blocks stacked vertically with a fixed gap between them.
+function stackHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, gap: number): number {
+  return blocks.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
+    + Math.max(0, blocks.length - 1) * gap
+}
+
+// Heading band height and the content height remaining under it.
+function headingArea(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): { headingTotal: number; available: number } {
   const headings = blocks.filter((block) => block.type === 'heading')
+  const headingTotal = headings.length ? stackHeight(headings, measurements, sceneBudget, 20) + 20 : 0
+  const available = Math.max(120, sceneBudget - headingTotal)
+  return { headingTotal, available }
+}
+
+function figureColumns(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): FigureColumns {
   const figures = blocks.filter((block) => block.type === 'figure')
   const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
-  const headingTotal = headings.length
-    ? headings.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
-      + Math.max(0, headings.length - 1) * 20 + 20
-    : 0
   // size=NN% means a fraction of the height REMAINING under the heading.
   // Position decides text roles: prose above the figure fills the right
   // column, prose below it joins the legend under the image (design v5).
-  const available = Math.max(120, sceneBudget - headingTotal)
+  const { headingTotal, available } = headingArea(blocks, measurements, sceneBudget)
   const firstFigureIndex = blocks.findIndex((block) => block.type === 'figure')
   const aboveProse = prose.filter((block) => blocks.indexOf(block) < firstFigureIndex)
   const belowProse = prose.filter((block) => blocks.indexOf(block) > firstFigureIndex)
-  const belowHeight = belowProse.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
-    + Math.max(0, belowProse.length - 1) * 12
+  const belowHeight = stackHeight(belowProse, measurements, sceneBudget, 12)
   // The legend space is mandated by the layout; `size` distributes only what
   // remains after it, so size=100% always fits exactly and never overflows.
   const frameArea = Math.max(80, available - belowHeight)
@@ -271,10 +288,29 @@ function figureColumns(blocks: PresentationBlock[], measurements: Map<string, nu
     return total + (sized ? (frameArea * Number(sized[1])) / 100 : blockHeight(block, measurements, sceneBudget))
   }, 0)
   const nonFrame = figures.length * FIGURE_CAPTION_ALLOWANCE + Math.max(0, figures.length - 1) * 12 + belowHeight
-  const aboveHeight = aboveProse.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0)
-    + Math.max(0, aboveProse.length - 1) * 12
+  const aboveHeight = stackHeight(aboveProse, measurements, sceneBudget, 12)
   return { headingTotal, available, frames, nonFrame, aboveHeight }
 }
+
+// The bg layout's left column: everything that is not a heading or a figure,
+// stacked, with the width-compensation factor applied (the panel narrows the
+// column to ~38% of the scene, so full-width measurements read short).
+function bgTextColumn(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number): { headingTotal: number; available: number; textNeeded: number } {
+  const { headingTotal, available } = headingArea(blocks, measurements, sceneBudget)
+  const prose = blocks.filter((block) => block.type !== 'heading' && block.type !== 'figure')
+  // The figures' captions render as real left-column paragraphs, so charge
+  // them the same allowance the figure layout reserves per captioned figure.
+  const captionAllowance = blocks
+    .filter((block) => block.type === 'figure' && (block.caption?.length || block.alt)).length * FIGURE_CAPTION_ALLOWANCE
+  return { headingTotal, available, textNeeded: (stackHeight(prose, measurements, sceneBudget, 12) + captionAllowance) * BG_TEXT_WIDTH_FACTOR }
+}
+
+// Shared shrink policy for figure text columns: scale down to the floor, and
+// past the floor let the scene overflow visibly instead.
+const scaleToFit = (needed: number, available: number): number | undefined =>
+  needed <= available ? undefined : Math.max(MIN_TEXT_SCALE, Math.round((available / needed) * 100) / 100)
+const effectiveTextHeight = (needed: number, available: number): number =>
+  Math.min(needed, Math.max(available, needed * MIN_TEXT_SCALE))
 
 interface FigureGridMetrics {
   columns: number
@@ -390,15 +426,27 @@ export function figureGridColumns(blocks: PresentationBlock[]): number | undefin
 }
 
 export function figureTextScale(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, legendMeasurements?: LegendMeasurements): number | undefined {
-  if (chooseLayout(blocks) !== 'figure') return undefined
+  const layout = chooseLayout(blocks)
+  if (layout === 'figure-bg') {
+    const { available, textNeeded } = bgTextColumn(blocks, measurements, sceneBudget)
+    return scaleToFit(textNeeded, available)
+  }
+  if (layout !== 'figure') return undefined
   if (figureCells(blocks).cells.length > 1) return figureGridPlan(blocks, measurements, sceneBudget, legendMeasurements).textScale
   const { available, aboveHeight } = figureColumns(blocks, measurements, sceneBudget)
-  if (aboveHeight <= available) return undefined
-  return Math.max(MIN_TEXT_SCALE, Math.round((available / aboveHeight) * 100) / 100)
+  return scaleToFit(aboveHeight, available)
 }
 
 function usedHeight(blocks: PresentationBlock[], measurements: Map<string, number>, sceneBudget: number, legendMeasurements?: LegendMeasurements): number {
-  if (chooseLayout(blocks) === 'figure') {
+  const layout = chooseLayout(blocks)
+  if (layout === 'figure-bg') {
+    // The bg figure costs nothing (it bleeds beside the flow); the scene is
+    // the heading plus the left text column, which shrinks like above-figure
+    // prose does before it overflows.
+    const { headingTotal, available, textNeeded } = bgTextColumn(blocks, measurements, sceneBudget)
+    return headingTotal + effectiveTextHeight(textNeeded, available)
+  }
+  if (layout === 'figure') {
     const figureCount = figureCells(blocks).cells.length
     if (figureCount > 1) {
       // The figure cap is NOT folded in here. Inflating the height to force a
@@ -412,13 +460,17 @@ function usedHeight(blocks: PresentationBlock[], measurements: Map<string, numbe
     const columnNeeded = frames + nonFrame
     const columnMinimum = frames * MIN_FRAME_SHRINK + nonFrame
     const figureColumn = Math.min(columnNeeded, Math.max(available, columnMinimum))
-    const effectiveAbove = Math.min(aboveHeight, Math.max(available, aboveHeight * MIN_TEXT_SCALE))
-    return headingTotal + Math.max(figureColumn, effectiveAbove)
+    return headingTotal + Math.max(figureColumn, effectiveTextHeight(aboveHeight, available))
   }
-  return blocks.reduce((total, block) => total + blockHeight(block, measurements, sceneBudget), 0) + Math.max(0, blocks.length - 1) * 20
+  return stackHeight(blocks, measurements, sceneBudget, 20)
 }
 
 export function chooseLayout(blocks: PresentationBlock[]): SceneLayout {
+  // design v5.1: a bg figure turns the scene into the full-height right-bleed
+  // layout — figure panel right, all text (body + legend + quotes) in the
+  // left column. It outranks statement: blockHeight prices bg figures at
+  // zero, which only holds when the bleed panel actually renders them.
+  if (blocks.some((block) => block.type === 'figure' && block.imageOptions?.background)) return 'figure-bg'
   if (blocks.some((block) => block.layoutHint === 'statement') || (blocks.length === 1 && blocks[0].type === 'blockquote')) {
     return 'statement'
   }

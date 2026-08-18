@@ -18,6 +18,13 @@ export interface MarpitImageOptions {
 
 const FILTER_PATTERN = /^(?:blur|brightness|contrast|drop-shadow|grayscale|hue-rotate|invert|opacity|saturate|sepia)(?::\S+)?$/i
 const LENGTH_PATTERN = /^(?:auto|\d*\.?\d+(?:px|cm|mm|in|pt|pc|em|rem|%)?)$/i
+const SIZE_PATTERN = /^\d+(?:\.\d+)?%$/
+
+// The single 15–100 clamp behind every size entry point: parse, write, and
+// the dialog's drag handle.
+export function clampSizePercent(value: number): number {
+  return Math.min(100, Math.max(15, value))
+}
 
 export function parseMarpitImageAlt(source: string): MarpitImageOptions {
   const options: MarpitImageOptions = {
@@ -67,7 +74,19 @@ export function parseMarpitImageAlt(source: string): MarpitImageOptions {
 
   options.alt = alt.join(' ')
   options.filters = filters.join(' ')
+  normalizeBackground(options)
   return options
+}
+
+// bg is the full-bleed mode (design v5.1): the panel owns the geometry, so
+// every sizing option is cleared — otherwise BlockView's inline width/fit
+// styles would override the panel's height-driven layout.
+function normalizeBackground(options: MarpitImageOptions): void {
+  if (!options.background) return
+  options.size = ''
+  options.width = ''
+  options.height = ''
+  options.fit = 'contain'
 }
 
 export function formatMarpitImageAlt(options: MarpitImageOptions): string {
@@ -151,19 +170,34 @@ export function parseImageAttributes(alt: string, attributes: string | null): Ma
     else if (key === 'fit' && ['contain', 'auto'].includes(value)) options.fit = value as ImageFit
     else if (key === 'side' && ['left', 'right'].includes(value)) options.side = value as ImageSide
     else if (key === 'split' && /^\d+(?:\.\d+)?%$/.test(value)) options.splitSize = value
-    else if (key === 'size' && /^\d+(?:\.\d+)?%$/.test(value)) options.size = value
+    else if (key === 'size' && SIZE_PATTERN.test(value)) options.size = clampSize(value)
     else if (key === 'filter') options.filters = value.trim()
   }
   if (!sawFigAlt && QUARTO_MARKER.test(attributes)) options.alt = ''
+  normalizeBackground(options)
   return options
 }
 
-// The write vocabulary is deliberately minimal (design v5): the only thing an
-// author configures is how much of the scene the figure occupies. Everything
-// else (width/height/fit/layout/bg/filter, Marpit alt tokens) stays readable
-// for compatibility but normalizes away on save.
+// The dialog drags within 15–100; free-text input follows the same range so
+// >100% can never reach the planner/renderer (where it half-breaks: CSS
+// min-height overrides max-height and the frame overflows the scene).
+function clampSize(value: string): string {
+  return `${clampSizePercent(Number(value.slice(0, -1)))}%`
+}
+
+// The write vocabulary is deliberately minimal (design v5.1): a figure is
+// either sized (`{size=NN%}`) or full-bleed (`{bg}`), nothing else. Everything
+// else (width/height/fit/layout/filter, Marpit alt tokens) stays readable
+// for compatibility but normalizes away on save; Marpit bg spellings
+// normalize to `{bg}`.
 export function formatImageAttributes(options: MarpitImageOptions): string {
-  return options.size ? `{size=${options.size}}` : ''
+  if (options.background) return '{bg}'
+  // The dialog feeds free-text straight into options.size — normalize a bare
+  // number ("45" → 45%) and clamp, so a near-miss never drops the attribute
+  // block (a bare ![alt](url) re-enters legacy Marpit alt parsing, which
+  // would eat config-looking words out of the alt text).
+  const numeric = options.size.match(/^(\d+(?:\.\d+)?)%?$/)
+  return numeric ? `{size=${clampSizePercent(Number(numeric[1]))}%}` : ''
 }
 
 export function imageFilterCss(filters: string): string | undefined {

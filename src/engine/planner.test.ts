@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { buildSemanticRegions, parsePresentationDocument } from './semantics'
 import { chooseLayout, figureCells, figureGridShape, planScenes, withPresentationCover } from './planner'
 import { defaultPresentationConfig } from '../presentationConfig'
+import { parseImageAttributes } from '../imageSyntax'
 import type { PresentationBlock, SemanticRegion } from './types'
 
 // Pagination depends on measured heights, so these tests supply an explicit
@@ -147,6 +148,40 @@ describe('planScenes — full-bleed figures', () => {
     expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
     expect(plan.scenes[0].warning).toBeUndefined()
     expect(plan.overflowCount).toBe(0)
+  })
+})
+
+describe('planScenes — bg figures', () => {
+  // design v5.1: a `{bg}` figure renders as a full-height right-bleed panel.
+  // It lives outside the text flow, so it costs the vertical budget nothing;
+  // the scene's height is the heading plus the left text column alone.
+  it('chooses the figure-bg layout when a figure carries the bg flag', () => {
+    const { blocks, regions } = regionsFrom('## Title\n\n正文段落。\n\n![chart](fig.png){bg}\n\n圖說。\n')
+    const plan = planScenes(regions, measure(blocks, (block) => (block.type === 'heading' ? 76 : 60)), 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].layout).toBe('figure-bg')
+  })
+
+  it('gives a bg figure zero height budget — a giant measurement cannot overflow the scene', () => {
+    const { blocks, regions } = regionsFrom('## Title\n\n正文段落。\n\n![chart](fig.png){bg}\n')
+    const measurements = measure(blocks, (block) => (block.type === 'figure' ? 800 : block.type === 'heading' ? 76 : 60))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].fillRatio).toBeLessThanOrEqual(1)
+    expect(plan.scenes[0].warning).toBeUndefined()
+    expect(plan.overflowCount).toBe(0)
+  })
+
+  it('scales the left column when its text outgrows the scene', () => {
+    const { blocks, regions } = regionsFrom('大量內文段落。\n\n![chart](fig.png){bg}\n\n圖說。\n')
+    const measurements = measure(blocks, (block) => (block.type === 'paragraph' && blocks.indexOf(block) === 0 ? 180 : block.type === 'figure' ? 280 : 40))
+    const plan = planScenes(regions, measurements, 430, 'balanced')
+
+    expect(plan.scenes).toHaveLength(1)
+    expect(plan.scenes[0].figureTextScale).toBeGreaterThanOrEqual(0.6)
+    expect(plan.scenes[0].figureTextScale).toBeLessThan(1)
   })
 })
 
@@ -496,6 +531,19 @@ describe('chooseLayout', () => {
     expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'legend' }), block({ id: 'p' })])).toBe('figure')
     expect(chooseLayout([block({ id: 'f', type: 'figure', layoutHint: 'hero' }), block({ id: 'p' })])).toBe('figure')
     expect(chooseLayout([block({ id: 'f', type: 'figure' })])).toBe('figure')
+  })
+
+  it('chooses figure-bg when any figure carries the bg flag', () => {
+    const bgOptions = parseImageAttributes('alt', 'bg')
+    expect(chooseLayout([block({ id: 'f', type: 'figure', imageOptions: bgOptions }), block({ id: 'p' })])).toBe('figure-bg')
+  })
+
+  it('lets figure-bg outrank statement — blockHeight prices bg figures at zero, which only the bleed panel honors', () => {
+    const bgOptions = parseImageAttributes('alt', 'bg')
+    expect(chooseLayout([
+      block({ id: 'q', type: 'blockquote', layoutHint: 'statement' }),
+      block({ id: 'f', type: 'figure', imageOptions: bgOptions }),
+    ])).toBe('figure-bg')
   })
 
   it('chooses text when there is no media', () => {

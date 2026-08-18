@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, Image, LoaderCircle, Upload, X } from 'lucide-react'
-import { type MarpitImageOptions } from '../imageSyntax'
+import { clampSizePercent, type MarpitImageOptions } from '../imageSyntax'
 import { SceneView } from './SceneView'
 import { chooseLayout, figureGridColumns } from '../engine/planner'
 import { buildSemanticRegions, parsePresentationDocument } from '../engine/semantics'
@@ -28,7 +28,7 @@ interface FigureDialogProps {
 
 function sizePercent(options: MarpitImageOptions): number {
   const match = options.size.match(/^(\d+(?:\.\d+)?)%$/)
-  return match ? Math.min(100, Math.max(15, Number(match[1]))) : 55
+  return match ? clampSizePercent(Number(match[1])) : 55
 }
 
 const DIALOG_CONFIG = defaultPresentationConfig('Figure preview')
@@ -156,7 +156,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
     const startY = event.clientY
     const startSize = size
     const onMove = (moveEvent: PointerEvent) => {
-      const next = Math.min(100, Math.max(15, startSize + ((moveEvent.clientY - startY) / basis) * 100))
+      const next = clampSizePercent(startSize + ((moveEvent.clientY - startY) / basis) * 100)
       onChange({ size: `${Math.round(next)}%` })
     }
     const onEnd = () => {
@@ -199,7 +199,7 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
           <div className="stage-shell figure-dialog-stage">
             <SceneView scene={scene} sceneNumber={1} sceneCount={1} presentationConfig={DIALOG_CONFIG} />
           </div>
-          {handlePosition && (
+          {handlePosition && !state.options.background && (
             <button
               className="figure-size-handle"
               style={{ left: handlePosition.left, top: handlePosition.top }}
@@ -221,10 +221,13 @@ export function FigureDialog({ state, documentId, onChange, onCancel, onSave }: 
               event.target.value = ''
             }} />
           </div>
-          {/* The basis is not always the scene: on a page with two or more
-              figures `size` is a fraction of this figure's own grid cell, so
-              the label has to say which. */}
-          <label><span>{scene.figureColumns ? `Size (cell %, ${scene.figureColumns}-up grid)` : 'Size (scene %)'}</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title={scene.figureColumns ? 'How much of this figure’s own grid cell it occupies. The page holds several figures, so the basis is the cell, not the whole scene.' : 'The only figure setting: how much of the scene it occupies. Everything else follows the fixed layout.'} /></label>
+          <label className="figure-field-check"><input type="checkbox" checked={state.options.background} onChange={(event) => onChange(event.target.checked ? { background: true } : { background: false, size: state.options.size || '55%' })} title="Full-height right-bleed panel: the image runs to the scene edges, all text moves to the left column." /><span>Full bleed (bg)</span></label>
+          {!state.options.background && (
+            /* The basis is not always the scene: on a page with two or more
+               figures `size` is a fraction of this figure's own grid cell, so
+               the label has to say which. */
+            <label><span>{scene.figureColumns ? `Size (cell %, ${scene.figureColumns}-up grid)` : 'Size (scene %)'}</span><input value={state.options.size} onChange={(event) => onChange({ size: event.target.value })} placeholder="e.g. 45%" title={scene.figureColumns ? 'How much of this figure’s own grid cell it occupies. The page holds several figures, so the basis is the cell, not the whole scene.' : 'How much of the scene the figure occupies. Everything else follows the fixed layout.'} /></label>
+          )}
         </div>
         <footer>
           <button onClick={onCancel}>Cancel</button>

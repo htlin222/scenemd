@@ -169,6 +169,10 @@ await send('Runtime.enable')
 await send('Log.enable')
 await send('Page.enable')
 await send('Network.enable')
+// The reused Chrome profile caches hashed assets AND index.html — a stale
+// index silently pins the whole previous build, making CSS/JS edits invisible
+// to the test. Never trust the profile cache.
+await send('Network.setCacheDisabled', { cacheDisabled: true })
 await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
 await send('Page.navigate', { url: baseUrl })
 
@@ -202,10 +206,17 @@ await evaluate(`[...document.querySelectorAll('.markdown-mode-button')].find((bu
 await waitForPage(`Boolean(document.querySelector('.markdown-document-scroll .markdown-document h1'))`, 'the split-mode rendered Markdown')
 
 // ── Clipboard image upload to R2 ─────────────────────────────────────────────
-const pasteDispatched = await evaluate(`(() => {
-  const binary = atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
-  const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0))
-  const file = new File([bytes], 'clipboard-image.png', { type: 'image/png' })
+// Portrait (200×800) rather than square: the bg bleed layout sizes the panel
+// from the image's aspect ratio, and a square would hide ratio mistakes.
+const pasteDispatched = await evaluate(`(async () => {
+  const canvas = document.createElement('canvas')
+  canvas.width = 200
+  canvas.height = 800
+  const context = canvas.getContext('2d')
+  context.fillStyle = '#33475b'
+  context.fillRect(0, 0, 200, 800)
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+  const file = new File([blob], 'clipboard-image.png', { type: 'image/png' })
   const transfer = new DataTransfer()
   transfer.items.add(file)
   return document.querySelector('.cm-content')?.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer })) === false
@@ -218,6 +229,26 @@ const pastedImage = await evaluate(`(() => ({
   uploadErrors: document.querySelectorAll('.image-upload-toast.is-error').length
 }))()`)
 if (!pastedImage.markdownInserted || !pastedImage.rendered || pastedImage.uploadErrors) throw new Error(`Clipboard image upload failed: ${JSON.stringify(pastedImage)}`)
+
+// ── bg figure markdown (design v5.1) ─────────────────────────────────────────
+// Append a `{bg}` scene reusing the image that was just uploaded, so the
+// preview section below can verify the full-height right-bleed layout.
+const uploadedImageUrl = await evaluate(`document.querySelector('.markdown-document img[src*="/api/images/"]')?.getAttribute('src')`)
+if (!uploadedImageUrl) throw new Error('No uploaded image URL available for the bg bleed check')
+const bgPasted = await evaluate(`(() => {
+  const content = document.querySelector('.cm-content')
+  if (!content) return false
+  if (content.textContent.includes('{bg}')) return true // already appended by a previous run
+  content.focus()
+  const selection = window.getSelection()
+  selection.selectAllChildren(content)
+  selection.collapseToEnd()
+  const transfer = new DataTransfer()
+  transfer.setData('text/plain', '\\n\\n## Bleed check\\n\\n左欄內文段落，確認正文留在左欄。\\n\\n![bleed](${uploadedImageUrl}){bg}\\n\\n圖說在左欄底部。\\n')
+  return content.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer })) === false
+})()`)
+if (!bgPasted) throw new Error('bg markdown paste was not applied')
+await waitForPage(`document.querySelector('.cm-content')?.textContent?.includes('{bg}')`, 'the bg figure markdown')
 
 // ── Cheat sheet ──────────────────────────────────────────────────────────────
 await evaluate(`document.querySelector('button[aria-label="Open Markdown and presentation cheat sheet"]')?.click()`)
@@ -235,6 +266,60 @@ const preview = await evaluate(`(() => ({
   overflow: document.querySelector('.preview-meta span:last-child')?.textContent?.trim()
 }))()`)
 if (!preview.scenes || preview.scaledPreviewFontSize < 11 || !preview.overflow?.includes('no overflow')) throw new Error(`Presentation preview failed: ${JSON.stringify(preview)}`)
+
+// ── bg figure bleed geometry (design v5.1) ───────────────────────────────────
+// Walk the scene dots until the figure-bg scene is on stage, then verify the
+// image really reaches the scene's right and bottom edges (design v5.1: the
+// panel undoes .scene-content's insets) and the prose stayed in the left column.
+let bgGeometry = null
+// Two passes: the first walk can race the replan that follows the bg paste,
+// so a miss waits for the plan to settle and walks the (possibly regrown)
+// dot list once more.
+for (let attempt = 0; attempt < 2 && !bgGeometry; attempt++) {
+  if (attempt) await wait(1000)
+  const sceneDotCount = await evaluate(`document.querySelectorAll('.scene-dots button').length`)
+  for (let index = 0; index < sceneDotCount && !bgGeometry; index++) {
+  await evaluate(`document.querySelectorAll('.scene-dots button')[${index}]?.click()`)
+  await wait(120)
+  bgGeometry = await evaluate(`(() => {
+    const scene = document.querySelector('.scene[data-layout="figure-bg"]')
+    if (!scene) return null
+    const image = scene.querySelector('.figure-bg-panel img')
+    const text = scene.querySelector('.figure-bg-text p')
+    const nav = scene.querySelector('.scene-section-nav')
+    if (!image || !text) return { missing: true }
+    const sceneRect = scene.getBoundingClientRect()
+    const imageRect = image.getBoundingClientRect()
+    const textRect = text.getBoundingClientRect()
+    // object-fit: contain can letterbox inside the element box, so measure the
+    // painted image, not just the <img> box.
+    const paintedScale = Math.min(imageRect.width / image.naturalWidth, imageRect.height / image.naturalHeight)
+    const paintedHeight = image.naturalHeight * paintedScale
+    return {
+      rightGap: sceneRect.right - imageRect.right,
+      bottomGap: sceneRect.bottom - imageRect.bottom,
+      paintedShortfall: imageRect.height - paintedHeight,
+      // full height: the image's top edge sits flush under the section-nav
+      // strip (design v5.1 「頂到 menu」)
+      topGap: nav ? imageRect.top - nav.getBoundingClientRect().bottom : 0,
+      textLeftOfImage: textRect.right <= imageRect.left,
+      hasLegend: Boolean(scene.querySelector(".figure-bg-caption")),
+    }
+  })()`)
+  }
+}
+if (!bgGeometry || bgGeometry.missing) {
+  const debugState = await evaluate(`JSON.stringify({
+    layouts: [...document.querySelectorAll('.scene[data-layout]')].map((scene) => scene.dataset.layout),
+    imageLines: [...document.querySelectorAll('.cm-line')].map((line) => line.textContent).filter((text) => text.includes('![')),
+  })`)
+  throw new Error(`figure-bg scene not found or incomplete: ${JSON.stringify(bgGeometry)} ${debugState}`)
+}
+if (Math.abs(bgGeometry.rightGap) > 3 || Math.abs(bgGeometry.bottomGap) > 3 || bgGeometry.paintedShortfall > 3 || Math.abs(bgGeometry.topGap) > 3 || !bgGeometry.textLeftOfImage || !bgGeometry.hasLegend) {
+  throw new Error(`figure-bg bleed geometry failed: ${JSON.stringify(bgGeometry)}`)
+}
+const bgShot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+await writeFile('artifacts/scenemd-figure-bg.png', Buffer.from(bgShot.data, 'base64'))
 
 // ── Presentation mode ────────────────────────────────────────────────────────
 await evaluate(`document.querySelector('.present-button')?.click()`)

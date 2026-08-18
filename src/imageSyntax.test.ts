@@ -15,19 +15,21 @@ describe('parseImageAttributes', () => {
   })
 
   it('parses the full attribute vocabulary', () => {
-    const options = parseImageAttributes('chart', 'width=480px height=280px layout=hero fit=auto bg side=left split=40% vertical filter="brightness:.8 sepia:50%"')
+    const options = parseImageAttributes('chart', 'width=480px height=280px layout=hero fit=auto side=left split=40% vertical filter="brightness:.8 sepia:50%"')
     expect(options).toMatchObject({
       alt: 'chart',
       width: '480px',
       height: '280px',
       layout: 'hero',
       fit: 'auto',
-      background: true,
       side: 'left',
       splitSize: '40%',
       vertical: true,
       filters: 'brightness:.8 sepia:50%',
     })
+    // bg owns the geometry (design v5.1): adding it clears the sizing options.
+    const withBg = parseImageAttributes('chart', 'width=480px fit=auto bg')
+    expect(withBg).toMatchObject({ background: true, width: '', height: '', fit: 'contain' })
   })
 
   it('ignores unknown keys and invalid values instead of guessing', () => {
@@ -61,6 +63,49 @@ describe('size attribute', () => {
   it('leaves size empty for legacy Marpit alt syntax', () => {
     expect(parseMarpitImageAlt('w:480 chart').size).toBe('')
   })
+
+  it('clamps size into the 15–100% range the dialog enforces', () => {
+    expect(parseImageAttributes('alt', 'size=150%').size).toBe('100%')
+    expect(parseImageAttributes('alt', 'size=5%').size).toBe('15%')
+    expect(parseImageAttributes('alt', 'size=45%').size).toBe('45%')
+  })
+})
+
+describe('bg mode', () => {
+  it('parses the {bg} flag and drops size next to it', () => {
+    const options = parseImageAttributes('alt', 'bg size=60%')
+    expect(options.background).toBe(true)
+    expect(options.size).toBe('')
+  })
+
+  it('clears every sizing option next to bg — the panel owns the geometry', () => {
+    const hybrid = parseImageAttributes('alt', 'bg width=40% height=200px fit=auto')
+    expect(hybrid.width).toBe('')
+    expect(hybrid.height).toBe('')
+    expect(hybrid.fit).toBe('contain')
+
+    const legacy = parseMarpitImageAlt('bg w:300 auto the alt')
+    expect(legacy.background).toBe(true)
+    expect(legacy.width).toBe('')
+    expect(legacy.fit).toBe('contain')
+  })
+
+  it('writes bg alone, overriding every other option', () => {
+    expect(formatImageAttributes(parseImageAttributes('alt', 'bg'))).toBe('{bg}')
+    expect(formatImageAttributes(parseImageAttributes('alt', 'bg width=40% layout=hero'))).toBe('{bg}')
+  })
+
+  it('normalizes Marpit bg spellings to {bg}', () => {
+    expect(formatImageAttributes(parseMarpitImageAlt('bg right the alt'))).toBe('{bg}')
+    expect(formatImageAttributes(parseMarpitImageAlt('bg left:33% w:480 the alt'))).toBe('{bg}')
+  })
+
+  it('round-trips {bg}', () => {
+    const options = parseImageAttributes('the alt', 'bg')
+    const reparsed = parseImageAttributes(options.alt, formatImageAttributes(options).slice(1, -1))
+    expect(reparsed.background).toBe(true)
+    expect(reparsed.size).toBe('')
+  })
 })
 
 describe('Quarto-style attributes', () => {
@@ -93,13 +138,22 @@ describe('formatImageAttributes', () => {
     expect(formatImageAttributes(options)).toBe('{size=45%}')
   })
 
+  it('clamps and normalizes free-text size on write', () => {
+    const options = parseImageAttributes('alt', 'size=45%')
+    expect(formatImageAttributes({ ...options, size: '150%' })).toBe('{size=100%}')
+    // A bare number keeps the attribute block: dropping it would re-enter
+    // legacy Marpit alt parsing and eat config-looking words from the alt.
+    expect(formatImageAttributes({ ...options, size: '45' })).toBe('{size=45%}')
+    expect(formatImageAttributes({ ...options, size: '300px' })).toBe('')
+  })
+
   it('returns an empty string without a size', () => {
     expect(formatImageAttributes(parseImageAttributes('just alt', ''))).toBe('')
     expect(formatImageAttributes(parseImageAttributes('chart', 'width=480px fit=auto'))).toBe('')
   })
 
   it('round-trips the size and normalizes legacy Marpit options away', () => {
-    const legacy = parseMarpitImageAlt('bg left:33% w:480 brightness:.8 the alt')
+    const legacy = parseMarpitImageAlt('left:33% w:480 brightness:.8 the alt')
     expect(legacy.width).toBe('480')
     expect(formatImageAttributes(legacy)).toBe('')
 
