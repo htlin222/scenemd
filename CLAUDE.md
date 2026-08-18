@@ -24,7 +24,7 @@ npm run db:migrate:remote
 Two test runners, split by what they can see:
 
 - **vitest** (`npm test`, `vitest.config.ts`) runs in **node with no DOM** over `src/**/*.test.ts`, `worker/**`, `functions/**`, and `test/**`. It covers the deterministic core — semantics, the planner, merge, image syntax — plus `test/corpus/`, which plans a fixture matrix and snapshots an aggregate scene-count/fill profile. That snapshot is a reviewable dashboard, not an invariant: a planner change is expected to move it, and the delta belongs in the commit message.
-- **Playwright** (`npm run test:e2e`) drives `tests/harness/` — `pipeline/` runs the real markdown → measure → planScenes → SceneView path in a browser, and the root harness mounts the editor. Anything about *rendered geometry* (column layout, frame heights, caption widths) has to be tested here; vitest cannot see it. Both harnesses must import `src/scene-theme.css`, or the scene renders unstyled and every geometry assertion is meaningless.
+- **Playwright** (`npm run test:e2e`) drives `tests/harness/` — `pipeline/` runs the real markdown → measure → planScenes → SceneView path in a browser, and the root harness mounts the editor. `scene-editor-sync.spec.ts` is the exception: it loads the real app against a stubbed document API, because editor ↔ scene sync only exists in the wiring between `App` and `MarkdownEditor`. Anything about *rendered geometry* (column layout, frame heights, caption widths) has to be tested here; vitest cannot see it. Both harnesses must import `src/scene-theme.css`, or the scene renders unstyled and every geometry assertion is meaningless.
 
 CI (`.github/workflows/ci.yml`) runs lint → test → typecheck → build, plus e2e and the smoke script as separate jobs.
 

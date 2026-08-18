@@ -32,9 +32,21 @@ const INITIAL_MARKDOWN = [
   '![Hybrid chart](https://img.test/three.png){width=40%} Hybrid legend text.', // 15
 ].join('\n')
 
+// A second, deliberately tall document. Scroll behaviour needs a document
+// taller than the editor viewport, and lengthening INITIAL_MARKDOWN would
+// move the line numbers the specs above assert on.
+const TALL_MARKDOWN = [
+  '# Tall harness',
+  '',
+  'Intro paragraph before any figure.',
+  ...Array.from({ length: 90 }, (_, index) => `Filler line ${index + 1}.`),
+].join('\n')
+
 function Harness() {
   const [value, setValue] = useState(INITIAL_MARKDOWN)
   const [mode, setMode] = useState<EditorMode>('write')
+  // Stands in for App's editorScrollRequest, which clicking a scene arms.
+  const [scrollRequest, setScrollRequest] = useState<{ line: number; key: number } | null>(null)
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       <button
@@ -42,6 +54,15 @@ function Harness() {
         onClick={() => setValue((current) => `${current}\n\nAppended by external sync.`)}
       >
         External update
+      </button>
+      <button data-testid="load-tall" onClick={() => setValue(TALL_MARKDOWN)}>
+        Load tall document
+      </button>
+      <button
+        data-testid="scroll-request"
+        onClick={() => setScrollRequest((current) => ({ line: 3, key: (current?.key ?? 0) + 1 }))}
+      >
+        Scroll to line 3
       </button>
       <div style={{ flex: 1, minHeight: 0 }}>
         <MarkdownEditor
@@ -53,6 +74,7 @@ function Harness() {
           onReset={() => setValue(INITIAL_MARKDOWN)}
           documentId="harness"
           saveStatus="saved"
+          scrollRequest={scrollRequest}
         />
       </div>
     </div>

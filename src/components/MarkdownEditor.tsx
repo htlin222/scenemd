@@ -515,13 +515,19 @@ export function MarkdownEditor({ value, onChange, theme, mode, onModeChange, onR
     }
     const renderedDocument = documentRef.current
     if (!renderedDocument) return
-    const lineCount = Math.max(1, value.split('\n').length - 1)
+    const lineCount = Math.max(1, valueRef.current.split('\n').length - 1)
     const scrollRange = Math.max(0, renderedDocument.scrollHeight - renderedDocument.clientHeight)
     renderedDocument.scrollTo({
       top: ((Math.max(1, scrollRequest.line) - 1) / lineCount) * scrollRange,
       behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
     })
-  }, [scrollRequest, mode, value])
+    // A scroll request is a one-shot command — `key` makes every request a
+    // fresh object precisely so this runs once per request. The document is
+    // read here but must not trigger the effect: with `value` in the list,
+    // every keystroke replayed the last request and yanked the view back to
+    // that line, which is what "pressing Enter scrolls to the top" was.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollRequest, mode])
 
   useEffect(() => {
     if (mode !== 'split') return
