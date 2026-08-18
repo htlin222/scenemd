@@ -129,3 +129,27 @@ test('an external value update keeps the cursor where it was', async ({ page }) 
   // The old whole-document replacement mapped the selection to offset 0 (Ln 1).
   await expect(page.locator('.markdown-statusbar')).toContainText('Ln 11,')
 })
+
+test('a satisfied scroll request is not replayed by later edits', async ({ page }) => {
+  // App arms a scroll request whenever the author picks a scene in the
+  // preview. The request is a one-shot command — once the editor has jumped
+  // to that line, typing somewhere else must leave the view where it is.
+  await page.getByTestId('load-tall').click()
+  await expect(page.locator('.cm-content')).toContainText('Tall harness')
+  await page.getByTestId('scroll-request').click()
+  const scroller = page.locator('.cm-scroller')
+  const scrollTop = () => scroller.evaluate((node) => node.scrollTop)
+  await expect.poll(scrollTop).toBeLessThan(60)
+
+  // Scroll away, put the cursor at the bottom of the document, and edit.
+  await scroller.evaluate((node) => { node.scrollTop = node.scrollHeight - node.clientHeight })
+  await page.locator('.cm-line', { hasText: 'Filler line 90.' }).click()
+  const before = await scrollTop()
+  expect(before).toBeGreaterThan(400)
+
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.markdown-statusbar')).toContainText('Ln 94,')
+  // The stale request used to fire again here and yank the editor back to
+  // line 3 — which reads as "pressing Enter scrolls the view to the top".
+  await expect.poll(scrollTop).toBeGreaterThan(before - 120)
+})
