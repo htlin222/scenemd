@@ -14,7 +14,7 @@ npm run typecheck           # BOTH projects — see note below
 npm test                    # vitest, node environment — the deterministic core
 npm run test:e2e            # Playwright against tests/harness/ — real rendered geometry
 npm run build               # tsc -b && vite build
-./tools/deploy.sh           # build → D1 remote migrate → Worker deploy → Pages deploy
+./tools/deploy.sh           # build → D1 remote migrate → Worker deploy → Pages deploy (CI runs this on main)
 npm run db:migrate:local    # apply migrations/ to the local D1
 npm run db:migrate:remote
 ```
@@ -26,7 +26,7 @@ Two test runners, split by what they can see:
 - **vitest** (`npm test`, `vitest.config.ts`) runs in **node with no DOM** over `src/**/*.test.ts`, `worker/**`, `functions/**`, and `test/**`. It covers the deterministic core — semantics, the planner, merge, image syntax — plus `test/corpus/`, which plans a fixture matrix and snapshots an aggregate scene-count/fill profile. That snapshot is a reviewable dashboard, not an invariant: a planner change is expected to move it, and the delta belongs in the commit message.
 - **Playwright** (`npm run test:e2e`) drives `tests/harness/` — `pipeline/` runs the real markdown → measure → planScenes → SceneView path in a browser, and the root harness mounts the editor. `scene-editor-sync.spec.ts` is the exception: it loads the real app against a stubbed document API, because editor ↔ scene sync only exists in the wiring between `App` and `MarkdownEditor`. Anything about *rendered geometry* (column layout, frame heights, caption widths) has to be tested here; vitest cannot see it. Both harnesses must import `src/scene-theme.css`, or the scene renders unstyled and every geometry assertion is meaningless.
 
-CI (`.github/workflows/ci.yml`) runs lint → test → typecheck → build, plus e2e and the smoke script as separate jobs.
+CI (`.github/workflows/ci.yml`) runs lint → test → typecheck → build, plus e2e and the smoke script as separate jobs. A fourth job deploys: a **push to `main` that clears all three gates runs `tools/deploy.sh` against production**, so merging a PR ships it. Pull requests stop at the gates. The job needs the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repo secrets; deploying by hand instead only needs `wrangler login`.
 
 `tools/browser-check.mjs` is the smoke test: self-contained (launches `wrangler pages dev` with local D1/R2/DO plus a headless Chrome; `SCENEMD_TEST_URL` / `SCENEMD_CDP_URL` attach to running instances instead), asserts on DOM selectors, and writes screenshots into `artifacts/`. It fails if selectors like `.documents-hero h1`, `.cm-editor`, or `.figure-bg-panel` change — update the script alongside such UI renames.
 
