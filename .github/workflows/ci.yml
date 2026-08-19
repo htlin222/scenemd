@@ -72,3 +72,32 @@ jobs:
           name: smoke-screenshots
           path: artifacts/*.png
           if-no-files-found: ignore
+
+  deploy:
+    # Production is downstream of every gate: a merge into main deploys, a pull
+    # request never can. `on.push.branches` already limits pushes to main, so
+    # the event type is the only thing left to check.
+    if: github.event_name == 'push'
+    needs: [verify, e2e, smoke]
+    runs-on: ubuntu-latest
+    # Two merges landing together must not race each other onto the same
+    # Worker and D1. Queue instead of cancelling — a half-finished deploy is
+    # worse than a slow one.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The same script a human runs locally: build, apply D1 migrations,
+      # deploy the Worker, then the Pages project. One code path, so a deploy
+      # that works by hand works here and vice versa. Wrangler skips the
+      # migration confirmation prompt on a non-interactive terminal.
+      - run: ./tools/deploy.sh
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
