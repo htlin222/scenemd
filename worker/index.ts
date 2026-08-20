@@ -1,6 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
 import { mergeMarkdown } from './merge'
-import { normalizeMarkdownWhitespace } from './normalize'
 import { renameMarkdownTitle } from './rename'
 
 interface Env {
@@ -353,7 +352,15 @@ export class DocumentRoom extends DurableObject<Env> {
       const next: DocumentState = {
         ...current,
         title: body.title?.trim() || current.title,
-        markdown: typeof body.markdown === 'string' ? normalizeMarkdownWhitespace(nextMarkdown) : current.markdown,
+        // Stored verbatim. An autosave that rewrites the author's markdown
+        // comes back 650ms after a keystroke and the editor adopts it, so any
+        // normalization here edits the document under the cursor — collapsing
+        // blank runs ate the second line of every Enter-Enter. Whitespace runs
+        // are fuel for the merge's sliding-anchor ambiguity, but merge.ts
+        // already detects that and returns a conflict; this was the redundant
+        // half of that defence, and the half with a cost. Ingested markdown
+        // (document create) is still tidied — see normalize.ts.
+        markdown: typeof body.markdown === 'string' ? nextMarkdown : current.markdown,
         presentationConfig: normalizePresentationConfig(body.presentationConfig ?? current.presentationConfig, body.title?.trim() || current.title),
         revision: current.revision + 1,
         updatedAt: new Date().toISOString(),

@@ -83,6 +83,38 @@ if (!process.env.SCENEMD_TEST_URL) {
   await waitFor(async () => (await fetch(`${baseUrl}/api/documents`)).ok, { timeout: 90000, interval: 1000, label: 'the app API' })
 }
 
+// ── Autosave round trip ──────────────────────────────────────────────────────
+// The only place the real save path runs: Pages Function → DocumentRoom →
+// D1 → back. An autosave must return the author's markdown byte for byte.
+// Rewriting it there means the editor adopts the rewrite 650ms after a
+// keystroke, deleting text under the cursor — collapsing blank runs on save
+// ate the second line of every Enter-Enter the author typed.
+async function checkAutosaveRoundTrip() {
+  const authored = '# Round trip\n\nAlpha.\n\n\nBravo.\n\n   \n\nCharlie.\n'
+  const created = await fetch(`${baseUrl}/api/documents`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title: 'Round trip' }),
+  }).then((response) => response.json())
+  if (!created.id) throw new Error(`Could not create a document: ${JSON.stringify(created)}`)
+
+  const saved = await fetch(`${baseUrl}/api/documents/${created.id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: authored, title: 'Round trip', baseRevision: created.revision, baseMarkdown: created.markdown }),
+  }).then((response) => response.json())
+  if (saved.markdown !== authored) {
+    throw new Error(`Autosave rewrote the markdown it was given.\n  sent:   ${JSON.stringify(authored)}\n  stored: ${JSON.stringify(saved.markdown)}`)
+  }
+
+  const reloaded = await fetch(`${baseUrl}/api/documents/${created.id}`).then((response) => response.json())
+  if (reloaded.markdown !== authored) {
+    throw new Error(`A reload changed the markdown.\n  sent:     ${JSON.stringify(authored)}\n  reloaded: ${JSON.stringify(reloaded.markdown)}`)
+  }
+  console.log('· autosave returns the author\'s markdown unchanged')
+}
+await checkAutosaveRoundTrip()
+
 // ── Chrome ───────────────────────────────────────────────────────────────────
 function chromePath() {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH

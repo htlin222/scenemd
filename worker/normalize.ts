@@ -1,16 +1,23 @@
 /**
- * Whitespace normalization applied when SceneMD stores markdown it authored
- * (autosave PATCH, document create). HackMD pulls stay verbatim — rewriting
- * externally-owned notes is not this module's call.
+ * Whitespace normalization applied to markdown SceneMD ingests: document
+ * create and import. HackMD pulls stay verbatim — rewriting externally-owned
+ * notes is not this module's call.
+ *
+ * Deliberately NOT applied to the autosave PATCH. What we ingest we may tidy;
+ * what an author is typing we store byte for byte. An autosave that rewrites
+ * the document returns 650ms after a keystroke and the editor adopts it, so
+ * normalizing there deletes text under the cursor.
  *
  * Whitespace-only lines are blank lines to CommonMark, so collapsing a blank
  * run is render-neutral — except where blank lines are literal content:
  * inside fenced code blocks (skipped via fence tracking) and inside 4-space
  * indented code blocks (approximated by leaving any blank run alone when a
  * neighbouring line is indented like code). These lines are exactly the
- * repeated material the autosave merge can mis-anchor on and duplicate (see
- * merge.ts); normalizing writes removes that fuel and heals documents that
- * already accumulated whitespace runs between reference entries.
+ * repeated material the autosave merge can mis-anchor on and duplicate, so
+ * tidying an import means a document does not arrive pre-loaded with that
+ * fuel. It is not the defence, though: merge.ts detects the ambiguity itself
+ * and returns a conflict (see its slide-zone tests), which is what keeps
+ * already-stored whitespace runs safe.
  */
 
 const BLANK = /^[ \t]*$/
