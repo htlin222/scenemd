@@ -34,7 +34,7 @@ jobs:
       - run: npm ci
       # ~190MB Chromium download; the suite itself runs in about 11s. Cached
       # across runs by the key below, so only a Playwright bump pays full price.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ hashFiles('package-lock.json') }}
