@@ -5,10 +5,18 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 if [[ -f .env ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
+  # .env holds 1Password op:// refs: re-exec under `op run` so wrangler gets the
+  # real token, and never source the refs over the injected values.
+  if grep -qE '^[^#]*=op://' .env; then
+    if [[ -z "${SCENEMD_OP_RUN:-}" ]]; then
+      SCENEMD_OP_RUN=1 exec op run --env-file=.env -- "$PROJECT_DIR/tools/deploy.sh" "$@"
+    fi
+  else
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
+  fi
 fi
 
 PAGES_PROJECT="${CF_PAGES_PROJECT:-scenemd}"

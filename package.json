@@ -25,8 +25,8 @@
     "test:watch": "vitest",
     "smoke": "node tools/browser-check.mjs",
     "preview": "vite preview",
-    "deploy:live": "wrangler deploy -c worker/wrangler.jsonc",
-    "deploy": "npm run build && npm run deploy:live && wrangler pages deploy dist --project-name=scenemd --branch=main",
+    "deploy:live": "op run --env-file=.env -- wrangler deploy -c worker/wrangler.jsonc",
+    "deploy": "npm run build && npm run deploy:live && op run --env-file=.env -- wrangler pages deploy dist --project-name=scenemd --branch=main",
     "db:migrate:local": "wrangler d1 migrations apply scenemd-documents --local",
     "db:migrate:remote": "wrangler d1 migrations apply scenemd-documents --remote"
   },
